@@ -1,17 +1,17 @@
-<p align="center">
-  <a href="./README.md">English</a> · <a href="./README.ru.md">Русский</a>
-</p>
-
 <h1 align="center">BURO</h1>
 
 <p align="center"><strong>Agent context that survives contact with reality.</strong></p>
+
+<p align="center">
+  <a href="./README.md">🇬🇧 <strong>English</strong></a> · <a href="./README.ru.md">🇷🇺 Русский</a>
+</p>
 
 <p align="center">No RAG. No <code>AGENTS.md</code>. No context pipeline.<br>
 One SQLite file, one schema, one reviewed draft — and the same answer every time you ask.</p>
 
 <p align="center">
   <img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-b0303e?style=flat-square">
-  <img alt="MIT license" src="https://img.shields.io/github/license/Krablante/buro?color=b0303e&style=flat-square">
+  <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-b0303e?style=flat-square">
 </p>
 
 <p align="center">
