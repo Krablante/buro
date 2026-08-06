@@ -48,93 +48,31 @@ and press the stamp.
 
 ## How it works
 
-The resolver is the only door. The CLI and the HTTP API open the same door,
-obey the same rules, and cannot invent fields. A preset defines what may
-exist; SQLite is the single copy of truth; every write walks through one
-reviewed YAML draft.
+The resolver is the only data door. The CLI and the HTTP API open the same
+door, obey the same rules, and cannot invent fields. A preset defines what may
+exist; SQLite is the single copy of truth; the supported operator write path
+starts with one reviewed YAML draft.
 
 ```mermaid
 flowchart LR
-  CLI[CLI] --> R[resolver]
+  CLI[CLI reads · draft push] --> R[resolver]
   API[HTTP API] --> R
-  P[preset · schema] --> R
-  R --> D[reviewed draft]
-  R --> DB[(SQLite)]
+  P[preset · schema] --> CLI
+  P --> R
+  R --> DB[(SQLite · entities)]
   DB -. snapshot .-> B[(backups)]
 ```
 
 ## The 60-second tour
 
-```console
-$ buro init
-BURO SQLite ready: ~/.local/share/buro/buro.sqlite3
+<p align="center">
+  <img alt="BURO terminal demo: initialize a registry, review a draft, push it, and render the entity" src="./assets/demo-en.gif" width="900">
+</p>
 
-$ buro schema
-BURO schema: politia v2
-default kind: project
-context kind: host
-kinds: project · service · external · lab · dotmd · skill · host
-
-$ buro draft new api service
-BURO draft ready
-mode: new service
-id: api
-file: ~/.local/share/buro/BURO_DRAFT.yaml
-```
-
-Fill in the facts. Missing fields stay commented; unknown fields do not exist:
-
-```yaml
-id: api
-name: API
-kind: service
-category: backend
-summary: Public API for Acme. Owns /v1/* and the webhook receiver.
-important:
-  - Deploys only through the release pipeline.
-  - Never restart the database from the API host.
-```
-
-```console
-$ buro draft diff
-BURO draft diff
-mode: new entity
-id: api
-
---- new entity
-+++ draft
-+ id: api
-+ name: API
-+ kind: service
-+ category: backend
-+ summary: Public API for Acme. Owns /v1/* and the webhook receiver.
-+ important:
-+   - Deploys only through the release pipeline.
-+   - Never restart the database from the API host.
-
-$ buro draft push
-BURO draft pushed
-action: created
-id: api
-
-$ buro api
-BURO Entity: service:api
-Name: API
-
-IDENTITY:
-  category: backend
-
-SUMMARY:
-  summary: Public API for Acme. Owns /v1/* and the webhook receiver.
-
-IMPORTANT:
-  important:
-    - Deploys only through the release pipeline.
-    - Never restart the database from the API host.
-```
-
-That is the whole loop: draft, diff, stamp. Every write in BURO goes through
-it — including yours.
+The loop is deliberately boring: initialize, prepare one schema-shaped draft,
+edit verified facts, inspect the diff, push, ask. Missing fields stay
+commented; unknown fields do not exist. The draft stays local even in client
+mode — only the validated entity crosses the HTTP transport.
 
 ## Why not X
 
@@ -143,7 +81,7 @@ it — including yours.
 | Where do agent facts live? | RAG: embed everything, hope | probabilistic answers, silent drift, a permanent vector bill | a typed SQLite registry: verified once, rendered deterministically |
 | How do agents learn the rules? | `AGENTS.md`, `CLAUDE.md`, `.cursor/rules` | files drift and get lost; you keep reminding agents to read them | `buro current` — one command, one packet, every session |
 | What if I have many machines? | a context platform: pipelines, plugins, providers | you now operate a second infrastructure forever | local / central / client — one resolver, no database copies on workers |
-| Who may write? | anyone, any time | context rots into noise | one reviewed draft per write, diff before push |
+| How do operators write? | anyone edits anything, any time | context rots into noise | one supported write workflow: reviewed draft, diff, then push |
 
 ## Quick start
 
@@ -160,8 +98,10 @@ buro schema
 buro list
 ```
 
-`buro init` creates a local instance under `~/.local/share/buro`. Runtime
-data, backups, and drafts stay outside the source tree.
+`buro init` creates a local instance under `~/.local/share/buro`. The database
+defaults to `~/.local/share/buro/state/buro/buro.sqlite3`; backups sit beside
+it under `state/buro/backups/sqlite`, and the draft stays at the instance root.
+None of them touches the source tree.
 
 ## Everyday commands
 
@@ -187,7 +127,7 @@ That is the whole admin surface: `buro init`, `buro backup`, and
 | Mode | Storage | Intended use |
 | --- | --- | --- |
 | `local` | Opens local SQLite directly | One machine, no service required |
-| `central` | Opens SQLite and serves HTTP | Canonical registry for several hosts |
+| `central` | Opens SQLite directly; `buro serve` adds HTTP | Canonical registry for several hosts |
 | `client` | Uses the central HTTP API | Thin workers with no database copy |
 
 Client configuration lives in `~/.config/buro/config.json`:
@@ -208,8 +148,9 @@ overrides, backup retention, and deployment boundaries.
 
 Every entity has a stable `id`, human-readable `name`, preset-defined `kind`,
 and only the fields allowed for that kind. BURO supports nine finite field
-types, including references and nested records. Unknown fields and invalid
-references fail before data changes.
+types, including references and nested records. Unknown fields fail before
+data changes; top-level references are checked against their declared target
+kind.
 
 The bundled [`politia`](./presets/politia.yaml) preset is both a complete
 public example and the model Politia runs on. It contains no private instance
@@ -228,8 +169,14 @@ DELETE /entities/:id
 GET    /packet/entity/:id?current_host=<id>
 ```
 
-The API is an optional transport, not a second implementation. Local and
-multihost installations keep the same entity and draft contracts.
+The API is an optional transport, not a second implementation. Its mutation
+routes carry client-mode draft pushes as validated entity JSON; the server does
+not store a second draft. Local and multihost installations keep the same
+validation and packet contracts.
+
+There is deliberately no authentication or TLS in the built-in server. Bind
+it to loopback or expose it only on a trusted private network behind your own
+access boundary.
 
 ## What BURO is not
 

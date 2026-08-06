@@ -1,6 +1,6 @@
 # BURO Draft Workflow
 
-Draft is the only public mutation path. It gives a human or agent one local YAML file to edit and one visible diff before SQLite changes.
+Draft is the supported operator mutation path. It gives a human or agent one local YAML file to edit and one visible diff before SQLite changes.
 
 ```text
 buro draft pull <id>
@@ -15,6 +15,6 @@ The draft is generated from the active preset. Existing facts are active YAML. M
 
 `draft new` uses the preset's default kind when kind is omitted, preserving the existing `project` behavior for Politia. Supplying the kind directly is clearer and generates the correct shape immediately.
 
-In local mode the draft pushes through the resolver into local SQLite. In client mode the worker fetches the central schema, validates the same YAML shape, and sends the entity through the central API. Successful create, update, and delete operations create a pre-mutation SQLite backup. Failed pushes leave the draft in place.
+In local mode the draft pushes through the resolver into local SQLite. In client mode the worker fetches the central schema, validates the same YAML shape, and sends the entity through the central API. The HTTP mutation routes therefore accept entity JSON; they are transport for client-mode pushes and do not create a second draft on the server. Successful create, update, and delete operations have a pre-mutation SQLite backup. Failed CLI pushes leave the local draft in place.
 
 The draft path defaults to `<instance_root>/BURO_DRAFT.yaml` and can be overridden with `draft_path` or `BURO_DRAFT_PATH`.

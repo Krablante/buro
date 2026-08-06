@@ -34,6 +34,7 @@
     "src/",
     "presets/",
     "docs/",
+    "assets/",
     "README.md",
     "README.ru.md"
   ],

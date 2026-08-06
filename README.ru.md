@@ -48,94 +48,32 @@ BURO — осознанная противоположность. Факты т�
 
 ## Как это устроено
 
-Resolver — единственная дверь. CLI и HTTP API открывают одну и ту же дверь,
-подчиняются одним правилам и не могут выдумать поля. Пресет определяет, что
-вообще может существовать; SQLite — единственная копия правды; каждая запись
-проходит через один проверяемый YAML-черновик.
+Resolver — единственная дверь к данным. CLI и HTTP API открывают одну и ту же
+дверь, подчиняются одним правилам и не могут выдумать поля. Пресет определяет,
+что вообще может существовать; SQLite — единственная копия правды;
+поддерживаемый операторский путь записи начинается с одного проверяемого
+YAML-черновика.
 
 ```mermaid
 flowchart LR
-  CLI[CLI] --> R[resolver]
+  CLI[CLI reads · draft push] --> R[resolver]
   API[HTTP API] --> R
-  P[preset · schema] --> R
-  R --> D[reviewed draft]
-  R --> DB[(SQLite)]
+  P[preset · schema] --> CLI
+  P --> R
+  R --> DB[(SQLite · entities)]
   DB -. snapshot .-> B[(backups)]
 ```
 
 ## Экскурсия на 60 секунд
 
-```console
-$ buro init
-BURO SQLite ready: ~/.local/share/buro/buro.sqlite3
+<p align="center">
+  <img alt="Терминальное демо BURO: создание реестра, проверка черновика, push и вывод сущности" src="./assets/demo-ru.gif" width="900">
+</p>
 
-$ buro schema
-BURO schema: politia v2
-default kind: project
-context kind: host
-kinds: project · service · external · lab · dotmd · skill · host
-
-$ buro draft new api service
-BURO draft ready
-mode: new service
-id: api
-file: ~/.local/share/buro/BURO_DRAFT.yaml
-```
-
-Заполняешь факты. Незаполненные поля остаются закомментированными; неизвестных
-полей не существует:
-
-```yaml
-id: api
-name: API
-kind: service
-category: backend
-summary: Public API for Acme. Owns /v1/* and the webhook receiver.
-important:
-  - Deploys only through the release pipeline.
-  - Never restart the database from the API host.
-```
-
-```console
-$ buro draft diff
-BURO draft diff
-mode: new entity
-id: api
-
---- new entity
-+++ draft
-+ id: api
-+ name: API
-+ kind: service
-+ category: backend
-+ summary: Public API for Acme. Owns /v1/* and the webhook receiver.
-+ important:
-+   - Deploys only through the release pipeline.
-+   - Never restart the database from the API host.
-
-$ buro draft push
-BURO draft pushed
-action: created
-id: api
-
-$ buro api
-BURO Entity: service:api
-Name: API
-
-IDENTITY:
-  category: backend
-
-SUMMARY:
-  summary: Public API for Acme. Owns /v1/* and the webhook receiver.
-
-IMPORTANT:
-  important:
-    - Deploys only through the release pipeline.
-    - Never restart the database from the API host.
-```
-
-Это весь цикл: черновик, diff, штамп. Через него проходит каждая запись в
-BURO — включая твою.
+Цикл нарочно скучный: инициализировал, подготовил черновик по схеме, вписал
+проверенные факты, посмотрел diff, применил, спросил. Незаполненные поля
+остаются комментариями; неизвестных полей не существует. Даже в client mode
+черновик остаётся локальным — через HTTP едет только провалидированная сущность.
 
 ## Почему не X
 
@@ -144,7 +82,7 @@ BURO — включая твою.
 | Где живут факты агента? | RAG: заэмбеддь всё, надейся | вероятностные ответы, тихий дрейф, вечный счёт за вектора | типизированный SQLite-реестр: проверил один раз, отвечает детерминированно |
 | Как агент узнаёт правила? | `AGENTS.md`, `CLAUDE.md`, `.cursor/rules` | файлы дрейфуют и теряются; агентам вечно напоминаешь их читать | `buro current` — одна команда, один пакет, в каждой сессии |
 | А если машин много? | контекстная платформа: пайплайны, плагины, провайдеры | теперь у тебя вторая инфраструктура на всю жизнь | local / central / client — один resolver, на воркерах нет копий базы |
-| Кто может писать? | кто угодно, когда угодно | контекст превращается в шум | один проверяемый черновик на запись, diff перед push |
+| Как писать оператору? | кто угодно правит что угодно и когда угодно | контекст превращается в шум | один поддерживаемый путь: проверяемый черновик, diff, затем push |
 
 ## Быстрый старт
 
@@ -161,8 +99,10 @@ buro schema
 buro list
 ```
 
-`buro init` создаёт локальный инстанс в `~/.local/share/buro`. Данные,
-бэкапы и черновики живут вне дерева исходников.
+`buro init` создаёт локальный инстанс в `~/.local/share/buro`. База по
+умолчанию лежит в `~/.local/share/buro/state/buro/buro.sqlite3`, бэкапы — в
+`state/buro/backups/sqlite`, а черновик — в корне инстанса. Дерево исходников
+они не трогают.
 
 ## Команды на каждый день
 
@@ -188,7 +128,7 @@ buro draft clear                выбросить черновик
 | Режим | Хранилище | Для чего |
 | --- | --- | --- |
 | `local` | Открывает локальный SQLite напрямую | Одна машина, никаких сервисов |
-| `central` | Открывает SQLite и отдаёт HTTP | Канонический реестр для нескольких хостов |
+| `central` | Открывает SQLite напрямую; `buro serve` добавляет HTTP | Канонический реестр для нескольких хостов |
 | `client` | Ходит в центральный HTTP API | Тонкие воркеры без копии базы |
 
 Конфиг клиента лежит в `~/.config/buro/config.json`:
@@ -210,7 +150,8 @@ buro draft clear                выбросить черновик
 У каждой сущности есть стабильный `id`, человекочитаемый `name`, `kind` из
 пресета — и только те поля, которые этому kind разрешены. BURO поддерживает
 девять конечных типов полей, включая ссылки и вложенные записи. Неизвестные
-поля и невалидные ссылки отклоняются до того, как данные изменятся.
+поля отклоняются до изменения данных; ссылки верхнего уровня сверяются со
+своим объявленным target kind.
 
 Встроенный пресет [`politia`](./presets/politia.yaml) — это и полный
 публичный пример, и модель, на которой работает Politia. В нём нет ни одной
@@ -229,9 +170,14 @@ DELETE /entities/:id
 GET    /packet/entity/:id?current_host=<id>
 ```
 
-API — опциональный транспорт, а не вторая реализация. Локальная и
-мультихостовая установки сохраняют одни и те же контракты сущностей и
-черновиков.
+API — опциональный транспорт, а не вторая реализация. Маршруты записи переносят
+client-mode push как провалидированный JSON сущности; второго черновика на
+сервере нет. Локальная и мультихостовая установки сохраняют одни и те же
+контракты валидации и рендера пакетов.
+
+Встроенный сервер намеренно не занимается аутентификацией и TLS. Привязывай
+его к loopback либо открывай только в доверенной приватной сети за собственным
+контуром доступа.
 
 ## Чем BURO не является
 

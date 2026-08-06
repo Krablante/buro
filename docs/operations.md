@@ -8,11 +8,13 @@ buro backup
 buro serve --host 0.0.0.0 --port 8765
 ```
 
-`buro init` creates or validates the active registry. `buro backup` uses SQLite's online backup API and applies retention in-process. BURO has no database daemon, backup timer, import pipeline, or alternate storage model.
+`buro init` creates or validates the active registry. `buro backup` uses SQLite's online backup API and applies retention in-process. `init`, `backup`, and `serve` require local or central mode because client mode has no local storage. BURO has no database daemon, backup timer, import pipeline, or alternate storage model.
+
+`buro serve` has no built-in authentication or TLS. Bind it to `127.0.0.1` unless a trusted private network or external proxy provides the access boundary.
 
 ## Deployment
 
-The Politia operator deployment packs once, backs up the central database, installs the same package centrally and on reachable workers, restarts the API, verifies generic entity output, and removes package artifacts. Worker topology is read from `buro list host`; explicit `BURO_WORKER_HOSTS` overrides discovery.
+The Politia operator deployment packs once, installs the package centrally, takes an online backup of the central database before the API restart, installs the same package on reachable workers, verifies generic entity output, and removes package artifacts. Worker topology is read from `buro list host`; explicit `BURO_WORKER_HOSTS` overrides discovery.
 
 ```sh
 npm run deploy:live -- --dry-run
