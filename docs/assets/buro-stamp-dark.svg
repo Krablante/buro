@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 300" role="img" aria-labelledby="title desc">
+  <title id="title">BURO stamp</title>
+  <desc id="desc">A rubber stamp marked BURO, approved</desc>
+  <defs>
+    <path id="ring" d="M130 110 a80 80 0 1 1 -0.01 0"/>
+  </defs>
+  <g fill="none" stroke="#ff7b88" stroke-width="8" stroke-linecap="round">
+    <rect x="102" y="12" width="56" height="62" rx="16"/>
+    <path d="M130 66v26"/>
+  </g>
+  <circle cx="130" cy="190" r="100" fill="none" stroke="#ff7b88" stroke-width="7"/>
+  <circle cx="130" cy="190" r="91" fill="none" stroke="#ff7b88" stroke-width="2" opacity="0.55"/>
+  <text fill="#ff7b88" font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="17" font-weight="700" letter-spacing="3">
+    <textPath href="#ring">BURO · TYPED CONTEXT · APPROVED ·</textPath>
+  </text>
+  <text x="130" y="216" text-anchor="middle" fill="#ff7b88" font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="52" font-weight="800" letter-spacing="6">BURO</text>
+  <circle cx="130" cy="244" r="15" fill="none" stroke="#ff7b88" stroke-width="5"/>
+  <path d="M122.5 244.5l5.5 5.5 10-11" fill="none" stroke="#ff7b88" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

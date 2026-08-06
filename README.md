@@ -1,58 +1,156 @@
-<h1 align="center">BURO</h1>
-
-<p align="center"><strong>Typed context. Deterministic answers.</strong></p>
+<p align="center">
+  <a href="./README.md">English</a> · <a href="./README.ru.md">Русский</a>
+</p>
 
 <p align="center">
-  <a href="https://github.com/Krablante/buro/releases"><img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-7c8cff?style=flat-square"></a>
-  <img alt="Node.js 24.14 or newer" src="https://img.shields.io/badge/Node.js-%E2%89%A524.14-5fa04e?style=flat-square&logo=nodedotjs&logoColor=white">
-  <img alt="SQLite storage" src="https://img.shields.io/badge/storage-SQLite-4b8bbe?style=flat-square&logo=sqlite&logoColor=white">
-  <img alt="Schema version 2" src="https://img.shields.io/badge/schema-v2-d977ff?style=flat-square">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/buro-stamp-dark.svg">
+    <img alt="BURO stamp" src="docs/assets/buro-stamp.svg" width="150">
+  </picture>
+</p>
+
+<h1 align="center">BURO</h1>
+
+<p align="center"><strong>Agent context that survives contact with reality.</strong></p>
+
+<p align="center">No RAG. No <code>AGENTS.md</code>. No context pipeline.<br>
+One SQLite file, one schema, one reviewed draft — and the same answer every time you ask.</p>
+
+<p align="center">
+  <img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-b0303e?style=flat-square">
+  <img alt="MIT license" src="https://img.shields.io/github/license/Krablante/buro?color=b0303e&style=flat-square">
 </p>
 
 <p align="center">
   <a href="./docs/overview.md">Overview</a> ·
   <a href="./docs/architecture.md">Architecture</a> ·
-  <a href="./docs/entities.md">Entity model</a> ·
   <a href="./docs/draft-workflow.md">Draft workflow</a> ·
   <a href="./docs/operations.md">Operations</a>
 </p>
 
-BURO is a small, typed context registry for AI agents. It turns verified facts
-into deterministic answers through one SQLite database, one schema-driven
-entity model, and one reviewable write workflow.
+## Why this exists
 
-No vector database. No scanner. No generated context tree. No distributed pile
-of files competing to be the source of truth.
+Every agent needs facts: where a service runs, which command deploys it, what
+you must not touch. Getting those facts into the agent is where the industry
+lost its mind.
 
-## Why BURO
+**RAG is a lottery.** You chunk, embed, retrieve, and hope. The answer wobbles
+with the embedding model, the chunk size, and the phase of the moon — and it
+rots silently, while somebody pays for the vectors forever.
 
-Agent context is infrastructure. It should be predictable enough to inspect,
-cheap enough to query on every turn, and strict enough to reject invented
-fields.
+**`AGENTS.md` is a promise nobody keeps.** A markdown file somewhere in the
+repo that drifts, duplicates, gets lost, and has to be re-explained to every
+new agent — and re-reminded to the old ones. It is not context. It is a rumor
+with a filename.
 
-| Principle | What it means |
-| --- | --- |
-| **Deterministic** | The same entity and context produce the same rendered answer. |
-| **Typed** | Presets define finite kinds, fields, references, and output sections. |
-| **Reviewable** | Every public write starts as YAML and shows a diff before mutation. |
-| **Portable** | Local, central, and client modes share one resolver and data model. |
-| **Private by design** | Presets define structure; instance facts stay in SQLite. |
+**"Context platforms" are a second infrastructure.** Pipelines, providers,
+plugins, generated context trees — they turn one lookup into a system whose
+diagram needs its own diagram, and you get to operate it for the rest of your
+life.
 
-## How it fits together
+BURO is the opposite on purpose. Facts are typed, verified once, and stored in
+a boring SQLite file. The agent asks; BURO answers. Same question, same
+answer, every time. The world changes? You edit one draft, review one diff,
+and press the stamp.
+
+## How it works
+
+The resolver is the only door. The CLI and the HTTP API open the same door,
+obey the same rules, and cannot invent fields. A preset defines what may
+exist; SQLite is the single copy of truth; every write walks through one
+reviewed YAML draft.
 
 ```mermaid
 flowchart LR
-  CLI[CLI] --> R[Resolver]
+  CLI[CLI] --> R[resolver]
   API[HTTP API] --> R
-  P[Active preset] --> S[Schema + validation]
-  R --> S
-  R --> D[Reviewed YAML draft]
-  R --> DB[(SQLite entities)]
-  DB -. pre-mutation snapshot .-> B[(Online backups)]
+  P[preset · schema] --> R
+  R --> D[reviewed draft]
+  R --> DB[(SQLite)]
+  DB -. snapshot .-> B[(backups)]
 ```
 
-The resolver is the single domain boundary. CLI and HTTP calls use the same
-validation, reference checks, rendering, mutation rules, and backup behavior.
+## The 60-second tour
+
+```console
+$ buro init
+BURO SQLite ready: ~/.local/share/buro/buro.sqlite3
+
+$ buro schema
+BURO schema: politia v2
+default kind: project
+context kind: host
+kinds: project · service · external · lab · dotmd · skill · host
+
+$ buro draft new api service
+BURO draft ready
+mode: new service
+id: api
+file: ~/.local/share/buro/BURO_DRAFT.yaml
+```
+
+Fill in the facts. Missing fields stay commented; unknown fields do not exist:
+
+```yaml
+id: api
+name: API
+kind: service
+category: backend
+summary: Public API for Acme. Owns /v1/* and the webhook receiver.
+important:
+  - Deploys only through the release pipeline.
+  - Never restart the database from the API host.
+```
+
+```console
+$ buro draft diff
+BURO draft diff
+mode: new entity
+id: api
+
+--- new entity
++++ draft
++ id: api
++ name: API
++ kind: service
++ category: backend
++ summary: Public API for Acme. Owns /v1/* and the webhook receiver.
++ important:
++   - Deploys only through the release pipeline.
++   - Never restart the database from the API host.
+
+$ buro draft push
+BURO draft pushed
+action: created
+id: api
+
+$ buro api
+BURO Entity: service:api
+Name: API
+
+IDENTITY:
+  category: backend
+
+SUMMARY:
+  summary: Public API for Acme. Owns /v1/* and the webhook receiver.
+
+IMPORTANT:
+  important:
+    - Deploys only through the release pipeline.
+    - Never restart the database from the API host.
+```
+
+That is the whole loop: draft, diff, stamp. Every write in BURO goes through
+it — including yours.
+
+## Why not X
+
+| The problem | The popular answer | Why it fails | BURO |
+| --- | --- | --- | --- |
+| Where do agent facts live? | RAG: embed everything, hope | probabilistic answers, silent drift, a permanent vector bill | a typed SQLite registry: verified once, rendered deterministically |
+| How do agents learn the rules? | `AGENTS.md`, `CLAUDE.md`, `.cursor/rules` | files drift and get lost; you keep reminding agents to read them | `buro current` — one command, one packet, every session |
+| What if I have many machines? | a context platform: pipelines, plugins, providers | you now operate a second infrastructure forever | local / central / client — one resolver, no database copies on workers |
+| Who may write? | anyone, any time | context rots into noise | one reviewed draft per write, diff before push |
 
 ## Quick start
 
@@ -69,19 +167,8 @@ buro schema
 buro list
 ```
 
-Create the first entity through the reviewed draft workflow:
-
-```bash
-buro draft new api service
-${EDITOR:-vi} ~/.local/share/buro/BURO_DRAFT.yaml
-buro draft diff
-buro draft push
-
-buro api
-```
-
-`buro init` creates a local instance under `~/.local/share/buro`. Runtime data,
-backups, and drafts stay outside the source tree.
+`buro init` creates a local instance under `~/.local/share/buro`. Runtime
+data, backups, and drafts stay outside the source tree.
 
 ## Everyday commands
 
@@ -99,8 +186,8 @@ buro draft push                 apply the draft
 buro draft clear                discard the draft
 ```
 
-Administrative commands remain deliberately small: `buro init`, `buro backup`,
-and `buro serve`.
+That is the whole admin surface: `buro init`, `buro backup`, and
+`buro serve`. It stays that way.
 
 ## Three operating modes
 
@@ -131,9 +218,9 @@ and only the fields allowed for that kind. BURO supports nine finite field
 types, including references and nested records. Unknown fields and invalid
 references fail before data changes.
 
-The bundled [`politia`](./presets/politia.yaml) preset is both a complete public
-example and the model used by Politia. It contains no private instance entities
-or deployment topology.
+The bundled [`politia`](./presets/politia.yaml) preset is both a complete
+public example and the model Politia runs on. It contains no private instance
+entities and no deployment topology.
 
 ## HTTP surface
 
@@ -149,27 +236,34 @@ GET    /packet/entity/:id?current_host=<id>
 ```
 
 The API is an optional transport, not a second implementation. Local and
-multihost installations retain the same entity and draft contracts.
+multihost installations keep the same entity and draft contracts.
 
-## Project map
+## What BURO is not
 
-```text
-presets/politia.yaml  public entity model
-src/schema.js         preset loading and typed validation
-src/db.js             SQLite storage and online backups
-src/resolver.js       shared entity operations
-src/draft.js          reviewed YAML writes
-src/packet.js         generic entity rendering
-src/api.js            optional HTTP transport
-src/cli.js            command surface
-docs/                 focused architecture and operations guides
-```
+- not a RAG pipeline — no embeddings, no chunks, no hope
+- not a filesystem scanner — no crawling, no generated context trees
+- not an orchestration platform — no plugin model, no providers, no vendor
+- not a documentation generator — these docs are written by humans
+- not a place for secrets — presets define structure, instance facts stay in
+  your own SQLite
 
-## Design boundaries
+## In production
 
-BURO deliberately does not become a RAG pipeline, orchestration platform,
-filesystem scanner, plugin ecosystem, or generated documentation system. Its
-job is narrower: keep trusted context explicit, typed, inspectable, and fast.
+BURO runs Politia — the multihost
+environment it was built for — every day, across several machines. It is
+equally at home on one laptop.
 
-Start with the [overview](./docs/overview.md), then read the
-[architecture](./docs/architecture.md) and [draft workflow](./docs/draft-workflow.md).
+Made by one person who got tired of reminding agents to read files.
+
+## Contributing
+
+BURO is about reviewed, verified facts — and so is its contribution process.
+Say what changed and why; that is the diff that matters. If a PR looks
+generated — a wall of polish and no reasoning — expect it to be sent back. No
+human should have to read AI slop to review your work.
+
+Open an issue first for anything bigger than a bug fix.
+
+## License
+
+[MIT](./LICENSE)

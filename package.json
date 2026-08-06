@@ -1,7 +1,8 @@
 {
   "name": "buro",
   "version": "1.0.0",
-  "description": "Typed SQLite context registry for agents, with configurable entity presets and reviewed draft writes",
+  "description": "Typed SQLite context registry for AI agents — no RAG, no AGENTS.md, one schema, one reviewed draft.",
+  "license": "MIT",
   "keywords": [
     "ai-agents",
     "agent-context",
@@ -10,7 +11,9 @@
     "cli",
     "yaml",
     "schema-validation",
-    "multi-host"
+    "multi-host",
+    "deterministic",
+    "agents"
   ],
   "repository": {
     "type": "git",
@@ -31,7 +34,8 @@
     "src/",
     "presets/",
     "docs/",
-    "README.md"
+    "README.md",
+    "README.ru.md"
   ],
   "scripts": {
     "start": "node src/index.js",
