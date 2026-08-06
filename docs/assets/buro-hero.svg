@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">BURO</title>
+  <desc id="desc">Typed context, deterministic answers.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#090d1a"/>
+      <stop offset="0.55" stop-color="#111a33"/>
+      <stop offset="1" stop-color="#17112c"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#70e1f5"/>
+      <stop offset="0.5" stop-color="#7c8cff"/>
+      <stop offset="1" stop-color="#d977ff"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#7c8cff" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#7c8cff" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M36 0H0V36" fill="none" stroke="#a9b4df" stroke-opacity="0.055"/>
+    </pattern>
+    <filter id="softGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="360" rx="28" fill="url(#background)"/>
+  <rect width="1200" height="360" rx="28" fill="url(#grid)"/>
+  <ellipse cx="210" cy="180" rx="250" ry="220" fill="url(#glow)"/>
+  <ellipse cx="1060" cy="40" rx="260" ry="180" fill="url(#glow)" opacity="0.5"/>
+
+  <g transform="translate(94 76)">
+    <rect x="0" y="0" width="208" height="208" rx="46" fill="#0d1429" stroke="url(#accent)" stroke-width="3"/>
+    <rect x="28" y="28" width="152" height="152" rx="28" fill="none" stroke="#99a7dc" stroke-opacity="0.18"/>
+
+    <g fill="none" stroke="url(#accent)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M65 58h53c24 0 37 11 37 29 0 14-8 24-22 28 18 4 28 15 28 32 0 22-16 35-43 35H65z"/>
+      <path d="M66 115h58"/>
+    </g>
+
+    <g fill="#9be7f5" filter="url(#softGlow)">
+      <circle cx="35" cy="44" r="5"/>
+      <circle cx="174" cy="51" r="5"/>
+      <circle cx="178" cy="169" r="5"/>
+    </g>
+    <g stroke="#7c8cff" stroke-width="2" stroke-opacity="0.65">
+      <path d="M35 44L58 64"/>
+      <path d="M174 51L151 70"/>
+      <path d="M178 169L154 153"/>
+    </g>
+  </g>
+
+  <g transform="translate(356 100)">
+    <text x="0" y="75" fill="#f4f6ff" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="88" font-weight="800" letter-spacing="8">BURO</text>
+    <rect x="2" y="98" width="590" height="2" rx="1" fill="url(#accent)" opacity="0.8"/>
+    <text x="2" y="140" fill="#c7cdec" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="25" font-weight="500" letter-spacing="0.5">Typed context. Deterministic answers.</text>
+
+    <g transform="translate(2 166)" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="14" font-weight="600" letter-spacing="0.7">
+      <rect width="92" height="32" rx="16" fill="#70e1f5" fill-opacity="0.11" stroke="#70e1f5" stroke-opacity="0.35"/>
+      <text x="46" y="21" fill="#9be7f5" text-anchor="middle">SQLITE</text>
+      <rect x="104" width="132" height="32" rx="16" fill="#7c8cff" fill-opacity="0.11" stroke="#7c8cff" stroke-opacity="0.4"/>
+      <text x="170" y="21" fill="#aeb8ff" text-anchor="middle">SCHEMA-FIRST</text>
+      <rect x="248" width="152" height="32" rx="16" fill="#d977ff" fill-opacity="0.1" stroke="#d977ff" stroke-opacity="0.35"/>
+      <text x="324" y="21" fill="#e4a6ff" text-anchor="middle">REVIEWED WRITES</text>
+    </g>
+  </g>
+
+  <g fill="#9ca8d3" opacity="0.65">
+    <circle cx="1107" cy="283" r="4"/>
+    <circle cx="1133" cy="283" r="4"/>
+    <circle cx="1159" cy="283" r="4"/>
+  </g>
+  <path d="M1107 283h52" stroke="#9ca8d3" stroke-opacity="0.2"/>
+</svg>

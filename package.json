@@ -2,6 +2,24 @@
   "name": "buro",
   "version": "1.0.0",
   "description": "Typed SQLite context registry for agents, with configurable entity presets and reviewed draft writes",
+  "keywords": [
+    "ai-agents",
+    "agent-context",
+    "context-registry",
+    "sqlite",
+    "cli",
+    "yaml",
+    "schema-validation",
+    "multi-host"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Krablante/buro.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Krablante/buro/issues"
+  },
+  "homepage": "https://github.com/Krablante/buro#readme",
   "type": "module",
   "engines": {
     "node": ">=24.14"
