@@ -1,0 +1,25 @@
+{
+  "name": "buro",
+  "version": "1.0.0",
+  "description": "Typed SQLite context registry for agents, with configurable entity presets and reviewed draft writes",
+  "type": "module",
+  "engines": {
+    "node": ">=24.14"
+  },
+  "bin": {
+    "buro": "src/cli.js"
+  },
+  "files": [
+    "src/",
+    "presets/",
+    "docs/",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node src/index.js",
+    "deploy:live": "bash scripts/deploy-live.sh"
+  },
+  "dependencies": {
+    "js-yaml": "^4.3.0"
+  }
+}

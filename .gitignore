@@ -1,0 +1,28 @@
+node_modules/
+.npm/
+build/
+dist/
+coverage/
+
+# Local configuration and mutable runtime state
+.env
+.env.*
+!.env.example
+state/
+.local/
+tmp/
+temp/
+BURO_DRAFT.yaml
+*.log
+*.pid
+*.tmp
+
+# Local database and backup artifacts
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.backup
+*.bak
+data/backups/
+data/runtime/
