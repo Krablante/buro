@@ -1,6 +1,6 @@
-<p align="center">
-  <img src="./docs/assets/buro-hero.svg" alt="BURO — typed context, deterministic answers" width="100%">
-</p>
+<h1 align="center">BURO</h1>
+
+<p align="center"><strong>Typed context. Deterministic answers.</strong></p>
 
 <p align="center">
   <a href="https://github.com/Krablante/buro/releases"><img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-7c8cff?style=flat-square"></a>
