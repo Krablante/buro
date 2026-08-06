@@ -2,13 +2,6 @@
   <a href="./README.md">English</a> · <a href="./README.ru.md">Русский</a>
 </p>
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/buro-stamp-dark.svg">
-    <img alt="Штамп BURO" src="docs/assets/buro-stamp.svg" width="150">
-  </picture>
-</p>
-
 <h1 align="center">BURO</h1>
 
 <p align="center"><strong>Контекст, который переживает встречу с реальностью.</strong></p>
