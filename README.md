@@ -25,7 +25,7 @@ One boring SQLite file, one reviewed draft, and an answer that does not improvis
   <a href="./docs/operations.md">Operations</a>
 </p>
 
-## Why this thing exists
+## 🧠 Why this thing exists
 
 Every agent needs facts: where a service runs, which command deploys it, what
 you must not touch. Getting those facts into the agent is where the industry
@@ -50,7 +50,7 @@ a boring SQLite file. The agent asks; BURO answers. Same question, same
 answer, every time. The world changes? You edit one draft, review one diff,
 and press the stamp.
 
-## The whole trick
+## 🪄 The whole trick
 
 The resolver is the only data door. The CLI and the HTTP API open the same
 door, obey the same rules, and cannot invent fields. A preset defines what may
@@ -67,7 +67,7 @@ flowchart LR
   DB -. snapshot .-> B[(backups)]
 ```
 
-## Watch it do the thing
+## 🎬 Watch it do the thing
 
 <p align="center">
   <img alt="BURO terminal demo: initialize a registry, review a draft, push it, and render the entity" src="./assets/demo-en.gif" width="900">
@@ -78,7 +78,7 @@ edit verified facts, inspect the diff, push, ask. Missing fields stay
 commented; unknown fields do not exist. The draft stays local even in client
 mode — only the validated entity crosses the HTTP transport.
 
-## The alternatives, unfortunately
+## 🥊 The alternatives, unfortunately
 
 | The problem | The popular answer | Why it fails | BURO |
 | --- | --- | --- | --- |
@@ -87,7 +87,7 @@ mode — only the validated entity crosses the HTTP transport.
 | What if I have many machines? | a context platform: pipelines, plugins, providers | you now operate a second infrastructure forever | local / central / client — one resolver, no database copies on workers |
 | How do operators write? | anyone edits anything, any time | context rots into noise | one supported write workflow: reviewed draft, diff, then push |
 
-## Put it on your machine
+## 🚀 Put it on your machine
 
 BURO requires Node.js 24.14 or newer.
 
@@ -107,7 +107,7 @@ defaults to `~/.local/share/buro/state/buro/buro.sqlite3`; backups sit beside
 it under `state/buro/backups/sqlite`, and the draft stays at the instance root.
 None of them touches the source tree.
 
-## The commands you actually need
+## ⌨️ The commands you actually need
 
 ```text
 buro <id>                       render one entity
@@ -126,7 +126,7 @@ buro draft clear                discard the draft
 That is the whole admin surface: `buro init`, `buro backup`, and
 `buro serve`. It stays that way.
 
-## Three operating modes
+## 🏠 Three operating modes
 
 | Mode | Storage | Intended use |
 | --- | --- | --- |
@@ -148,7 +148,7 @@ Client configuration lives in `~/.config/buro/config.json`:
 See [state and runtime](./docs/state-and-runtime.md) for paths, environment
 overrides, backup retention, and deployment boundaries.
 
-## Entity model
+## 🧬 Entity model
 
 Every entity has a stable `id`, human-readable `name`, preset-defined `kind`,
 and only the fields allowed for that kind. BURO supports nine finite field
@@ -160,7 +160,7 @@ The bundled [`politia`](./presets/politia.yaml) preset is both a complete
 public example and the model Politia runs on. It contains no private instance
 entities and no deployment topology.
 
-## HTTP surface
+## 🌐 HTTP surface
 
 ```text
 GET    /health
@@ -182,7 +182,7 @@ There is deliberately no authentication or TLS in the built-in server. Bind
 it to loopback or expose it only on a trusted private network behind your own
 access boundary.
 
-## What BURO refuses to become
+## 🚫 What BURO refuses to become
 
 - not a RAG pipeline — no embeddings, no chunks, no hope
 - not a filesystem scanner — no crawling, no generated context trees
@@ -191,7 +191,7 @@ access boundary.
 - not a place for secrets — presets define structure, instance facts stay in
   your own SQLite
 
-## Yes, it actually runs
+## 🔥 Yes, it actually runs
 
 BURO runs Politia — the multihost
 environment it was built for — every day, across several machines. It is
@@ -199,7 +199,7 @@ equally at home on one laptop.
 
 Made by one person who got tired of reminding agents to read files.
 
-## If you want to poke it
+## 🛠️ If you want to poke it
 
 BURO is about reviewed, verified facts — and so is its contribution process.
 Say what changed and why; that is the diff that matters. If a PR looks
@@ -208,6 +208,6 @@ human should have to read AI slop to review your work.
 
 Open an issue first for anything bigger than a bug fix.
 
-## License
+## 📜 License
 
 [MIT](./LICENSE)
