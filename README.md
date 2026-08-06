@@ -1,13 +1,17 @@
 <h1 align="center">BURO</h1>
 
-<p align="center"><strong>Agent context that survives contact with reality.</strong></p>
+<p align="center"><strong>Give the agent facts. Skip the séance.</strong></p>
 
 <p align="center">
   <a href="./README.md">🇬🇧 <strong>English</strong></a> · <a href="./README.ru.md">🇷🇺 Русский</a>
 </p>
 
-<p align="center">No RAG. No <code>AGENTS.md</code>. No context pipeline.<br>
-One SQLite file, one schema, one reviewed draft — and the same answer every time you ask.</p>
+<p align="center">No RAG roulette. No <code>AGENTS.md</code> scavenger hunt. No twelve-box context pipeline.<br>
+One boring SQLite file, one reviewed draft, and an answer that does not improvise.</p>
+
+<p align="center">
+  <img alt="BURO stickers: no RAG, boring SQLite, diff first and stamp later" src="./assets/stickers-en.svg" width="720">
+</p>
 
 <p align="center">
   <img alt="Version 1.0.0" src="https://img.shields.io/badge/version-1.0.0-b0303e?style=flat-square">
@@ -21,7 +25,7 @@ One SQLite file, one schema, one reviewed draft — and the same answer every ti
   <a href="./docs/operations.md">Operations</a>
 </p>
 
-## Why this exists
+## Why this thing exists
 
 Every agent needs facts: where a service runs, which command deploys it, what
 you must not touch. Getting those facts into the agent is where the industry
@@ -46,7 +50,7 @@ a boring SQLite file. The agent asks; BURO answers. Same question, same
 answer, every time. The world changes? You edit one draft, review one diff,
 and press the stamp.
 
-## How it works
+## The whole trick
 
 The resolver is the only data door. The CLI and the HTTP API open the same
 door, obey the same rules, and cannot invent fields. A preset defines what may
@@ -63,7 +67,7 @@ flowchart LR
   DB -. snapshot .-> B[(backups)]
 ```
 
-## The 60-second tour
+## Watch it do the thing
 
 <p align="center">
   <img alt="BURO terminal demo: initialize a registry, review a draft, push it, and render the entity" src="./assets/demo-en.gif" width="900">
@@ -74,7 +78,7 @@ edit verified facts, inspect the diff, push, ask. Missing fields stay
 commented; unknown fields do not exist. The draft stays local even in client
 mode — only the validated entity crosses the HTTP transport.
 
-## Why not X
+## The alternatives, unfortunately
 
 | The problem | The popular answer | Why it fails | BURO |
 | --- | --- | --- | --- |
@@ -83,7 +87,7 @@ mode — only the validated entity crosses the HTTP transport.
 | What if I have many machines? | a context platform: pipelines, plugins, providers | you now operate a second infrastructure forever | local / central / client — one resolver, no database copies on workers |
 | How do operators write? | anyone edits anything, any time | context rots into noise | one supported write workflow: reviewed draft, diff, then push |
 
-## Quick start
+## Put it on your machine
 
 BURO requires Node.js 24.14 or newer.
 
@@ -103,7 +107,7 @@ defaults to `~/.local/share/buro/state/buro/buro.sqlite3`; backups sit beside
 it under `state/buro/backups/sqlite`, and the draft stays at the instance root.
 None of them touches the source tree.
 
-## Everyday commands
+## The commands you actually need
 
 ```text
 buro <id>                       render one entity
@@ -178,7 +182,7 @@ There is deliberately no authentication or TLS in the built-in server. Bind
 it to loopback or expose it only on a trusted private network behind your own
 access boundary.
 
-## What BURO is not
+## What BURO refuses to become
 
 - not a RAG pipeline — no embeddings, no chunks, no hope
 - not a filesystem scanner — no crawling, no generated context trees
@@ -187,7 +191,7 @@ access boundary.
 - not a place for secrets — presets define structure, instance facts stay in
   your own SQLite
 
-## In production
+## Yes, it actually runs
 
 BURO runs Politia — the multihost
 environment it was built for — every day, across several machines. It is
@@ -195,7 +199,7 @@ equally at home on one laptop.
 
 Made by one person who got tired of reminding agents to read files.
 
-## Contributing
+## If you want to poke it
 
 BURO is about reviewed, verified facts — and so is its contribution process.
 Say what changed and why; that is the diff that matters. If a PR looks
