@@ -1,5 +1,5 @@
 id: starter
-version: 1
+version: 2
 default_kind: project
 
 context:
@@ -7,6 +7,31 @@ context:
   alias_field: aliases
   member_field: host
   root_field: root
+
+sections:
+  identity:
+    guide: Names and classifications that identify the entity.
+  location:
+    guide: Where the entity lives and which host owns it.
+  repository:
+    guide: Source repository information for the entity.
+  summary:
+    guide: A short verified explanation of what the entity is.
+    draft_guide: Describe the entity itself, not the current task or an aspiration.
+  read_first:
+    guide: Files or documents to read before working on the entity.
+    draft_guide: List only canonical starting points, in useful reading order.
+  important:
+    guide: Important rules that must be remembered while working with the entity.
+    draft_guide: Add only rules that materially affect how work must be performed.
+  avoid:
+    guide: Actions and assumptions that are unsafe or forbidden for the entity.
+    draft_guide: State concrete prohibitions or unsafe assumptions, not generic cautions.
+  related:
+    guide: Related entities or resources that provide useful operational context.
+    draft_guide: Include only useful relationships and explain why each one matters.
+  host:
+    guide: Connectivity and operating facts specific to the host.
 
 field_sets:
   resource:

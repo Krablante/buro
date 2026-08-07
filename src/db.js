@@ -125,7 +125,7 @@ function bindingMismatch(binding, schema) {
   if (binding.preset_version !== schema.version) {
     return `database uses ${schema.id} v${binding.preset_version}, active preset is v${schema.version}`;
   }
-  if (!binding.preset_hash) return "database preset binding has no schema hash";
+  if (!binding.preset_hash) return "database preset binding has no model hash";
   if (binding.preset_hash !== schema.hash) {
     return `database preset hash differs from ${schema.id} v${schema.version}`;
   }

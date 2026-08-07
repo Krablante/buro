@@ -18,11 +18,13 @@ export function entityPacket(entity, schema, currentContext = null, contextEntit
   for (const name of visibleFields(entity, schema)) {
     const sectionName = schema.fields[name].section || "facts";
     if (!bySection.has(sectionName)) {
-      const section = { name: sectionName, fields: [] };
+      const guide = schema.sections?.[sectionName]?.guide;
+      const section = { name: sectionName, ...(guide ? { guide } : {}), fields: [] };
       bySection.set(sectionName, section);
       sections.push(section);
     }
-    bySection.get(sectionName).fields.push({ name, value: entity[name] });
+    const guide = schema.fields[name].guide;
+    bySection.get(sectionName).fields.push({ name, ...(guide ? { guide } : {}), value: entity[name] });
   }
   return {
     id: entity.id,
@@ -53,7 +55,11 @@ export function renderPacket(packet) {
   if (packet.context) lines.push(`Context: ${packet.context.id} (${packet.context.relation})`);
   for (const section of packet.sections) {
     lines.push("", `${section.name.toUpperCase()}:`);
-    for (const field of section.fields) lines.push(...renderValue(field.name, field.value));
+    if (section.guide) lines.push(`  # ${section.guide}`);
+    for (const field of section.fields) {
+      if (field.guide) lines.push(`  # ${field.name} — ${field.guide}`);
+      lines.push(...renderValue(field.name, field.value));
+    }
   }
   return `${lines.join("\n")}\n`;
 }

@@ -112,6 +112,7 @@ cd "$BURO_ROOT"
 require_file package.json
 
 package_name=$(node -p "const p=require('./package.json'); p.name + '-' + p.version + '.tgz'")
+politia_version=$(node -p "require('js-yaml').load(require('node:fs').readFileSync('./presets/politia.yaml', 'utf8')).version")
 tarball="$PACK_DIR/$package_name"
 node_bin_dir=$(dirname "$(command -v node)")
 sudo_node_path="$node_bin_dir:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -134,10 +135,10 @@ run_shell "umask 077 && printf '%s\\n' '$central_config' > '$HOME/.config/buro/c
 run sudo -n env "PATH=$sudo_node_path" npm install -g "$tarball" --prefix /usr/local
 
 if [ "$restart_api" -eq 1 ]; then
-  log "back up central SQLite and restart live API"
-  run env BURO_MODE=local BURO_PRESET=politia "BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST" buro backup
+  log "validate central entities, adopt the active preset, and restart live API"
   run systemctl --user stop buro-api.service
   api_stopped=1
+  run env BURO_MODE=local BURO_PRESET=politia "BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST" buro init
   run systemctl --user restart buro-api.service
   api_stopped=0
   run systemctl --user is-active buro-api.service
@@ -181,14 +182,18 @@ if [ "$sync_workers" -eq 1 ]; then
   done
 fi
 
-log "verify live packet format"
+log "verify live preset and guided packet format"
+run_shell "BURO_MODE=local BURO_PRESET=politia BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST buro schema | grep -F 'BURO schema: politia v$politia_version'"
 run_shell "BURO_MODE=local BURO_PRESET=politia BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST buro buro | grep -E 'BURO Entity:|Context:'"
+run_shell "BURO_MODE=local BURO_PRESET=politia BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST buro buro | grep -E '^  # [a-z_]+ — ' >/dev/null"
 run_shell "BURO_MODE=client BURO_CURRENT_CONTEXT=worker BURO_CENTRAL_HOST=$BURO_SERVER_HOST BURO_API_URL=http://127.0.0.1:$BURO_API_PORT buro buro | grep -E 'BURO Entity:|Context:'"
+run_shell "BURO_MODE=client BURO_CURRENT_CONTEXT=worker BURO_CENTRAL_HOST=$BURO_SERVER_HOST BURO_API_URL=http://127.0.0.1:$BURO_API_PORT buro buro | grep -E '^  # [a-z_]+ — ' >/dev/null"
 run_shell "BURO_MODE=local BURO_PRESET=politia BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST buro $BURO_SERVER_HOST | grep -E 'BURO Entity:|Context:'"
 
 if [ "$sync_workers" -eq 1 ]; then
   for host in "${deployed_workers[@]}"; do
     run_shell "ssh $host 'buro buro | grep -E '\''BURO Entity:|Context:'\'''"
+    run_shell "ssh $host 'buro buro | grep -E '\''^  # [a-z_]+ — '\'' >/dev/null'"
   done
 fi
 

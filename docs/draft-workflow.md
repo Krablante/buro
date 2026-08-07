@@ -11,7 +11,7 @@ buro draft push
 buro draft clear
 ```
 
-Only one draft may exist at a time. Pull/new/delete refuses to overwrite it; push it or clear it deliberately. The draft is generated from the active preset. Existing facts are active YAML, required missing fields are active and labelled, and optional missing fields stay commented with their guides and complete record shape.
+Only one draft may exist at a time. Pull/new/delete refuses to overwrite it; push it or clear it deliberately. The draft is generated from the active preset. Existing facts are active YAML, required missing fields are active and labelled, and optional missing fields stay commented with their guides and complete record shape. Every configured section explains what belongs there; optional `draft_guide` text adds filling advice that is never rendered as entity data.
 
 Internal `__buro` metadata records whether the operation creates, updates, or deletes and captures the base entity revision. The stable entity id cannot be renamed inside an update draft. Diff and push reject a stale revision, so another host or operator cannot be overwritten after review.
 

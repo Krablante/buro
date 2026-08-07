@@ -5,7 +5,18 @@ function fieldGuideText(schema) {
     .join("\n");
 }
 
+function kindSectionNames(schema, kind) {
+  return [...new Set(schema.kinds[kind].fields.map((field) => schema.fields[field].section || "facts"))];
+}
+
+function sectionGuideLines(schema, kind, indent = "  ") {
+  return kindSectionNames(schema, kind)
+    .filter((name) => schema.sections?.[name]?.guide)
+    .map((name) => `${indent}- ${name}: ${schema.sections[name].guide}`);
+}
+
 export function renderUsage(schema) {
+  const sections = sectionGuideLines(schema, schema.default_kind);
   return [
     "BURO keeps typed, moderated agent context in one SQLite registry.",
     "",
@@ -30,15 +41,20 @@ export function renderUsage(schema) {
     "  <id>          Render one entity.",
     "  current       Render current-context information for agent prompts.",
     "  list [kind]   List all entities, optionally filtered by kind.",
-    "  schema        Show the active preset; add a kind for its field guide.",
+    "  schema        Show the active preset; add a kind for its section and field guide.",
     "  draft         Review and apply the one local YAML draft.",
     "  export        Write a complete portable registry manifest.",
     "  import        Validate and atomically replace from a manifest.",
-    "  help          Show this usage and the default-kind field guide.",
+    "  help          Show this usage and the default-kind section and field guide.",
     "",
     "How to edit entities:",
     `  Use draft for every write. The default kind is ${schema.default_kind}. Leave unknown facts empty instead of guessing.`,
     "",
+    ...(sections.length ? [
+      `${schema.default_kind} sections:`,
+      ...sections,
+      "",
+    ] : []),
     `${schema.default_kind} fields:`,
     fieldGuideText(schema),
     "",
@@ -59,9 +75,11 @@ export function renderSchemaSummary(schema) {
 export function renderKindSchema(schema, kind) {
   const definition = schema.kinds[kind];
   if (!definition) throw new Error(`unsupported entity kind: ${kind}`);
+  const sections = sectionGuideLines(schema, kind, "");
   const lines = [
     `BURO kind: ${kind}`,
     `preset: ${schema.id} v${schema.version}`,
+    ...(sections.length ? ["sections:", ...sections] : []),
     "fields:",
     "- id (string, required): stable entity id",
     "- name (string, required): human-readable name",

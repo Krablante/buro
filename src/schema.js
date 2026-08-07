@@ -6,10 +6,11 @@ import yaml from "js-yaml";
 const CORE_FIELDS = ["id", "name", "kind"];
 const RESERVED_FIELDS = new Set([...CORE_FIELDS, "updated_at", "__buro"]);
 const FIELD_TYPES = new Set(["string", "text", "boolean", "integer", "number", "ref", "string-list", "record", "record-list"]);
-const TOP_LEVEL_KEYS = new Set(["id", "version", "default_kind", "context", "field_sets", "kinds", "fields"]);
+const TOP_LEVEL_KEYS = new Set(["id", "version", "default_kind", "context", "sections", "field_sets", "kinds", "fields"]);
 const KIND_KEYS = new Set(["label", "field_sets", "fields"]);
 const FIELD_KEYS = new Set(["type", "target_kind", "section", "guide", "fields", "paired_fields", "required", "default", "packet", "draft_optional"]);
 const CONTEXT_KEYS = new Set(["kind", "alias_field", "member_field", "root_field"]);
+const SECTION_KEYS = new Set(["guide", "draft_guide"]);
 const DEFAULT_SCHEMA_PATH = fileURLToPath(new URL("../presets/starter.yaml", import.meta.url));
 
 function plainObject(value) {
@@ -19,6 +20,12 @@ function plainObject(value) {
 function requireString(value, label) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label} must be a non-empty string`);
   return value.trim();
+}
+
+function requireSingleLine(value, label) {
+  const text = requireString(value, label);
+  if (/\r|\n/.test(text)) throw new Error(`${label} must be a single line`);
+  return text;
 }
 
 function rejectUnknownKeys(value, allowed, label) {
@@ -42,9 +49,10 @@ function validateFieldDefinition(name, field) {
       throw new Error(`schema field ${name}.${flag} must be a boolean`);
     }
   }
-  for (const text of ["section", "guide", "target_kind"]) {
+  for (const text of ["section", "target_kind"]) {
     if (field[text] !== undefined) requireString(field[text], `schema field ${name}.${text}`);
   }
+  if (field.guide !== undefined) requireSingleLine(field.guide, `schema field ${name}.guide`);
   if (field.target_kind !== undefined && field.type !== "ref") {
     throw new Error(`schema field ${name}.target_kind is valid only for ref fields`);
   }
@@ -73,6 +81,16 @@ function stableValue(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableValue(value[key])]));
 }
 
+function modelField(field) {
+  return Object.fromEntries(Object.entries(field).flatMap(([key, value]) => {
+    if (key === "guide") return [];
+    if (key === "fields") {
+      return [[key, Object.fromEntries(Object.entries(value).map(([name, nested]) => [name, modelField(nested)]))]];
+    }
+    return [[key, value]];
+  }));
+}
+
 function schemaHash(schema) {
   const canonical = stableValue({
     id: schema.id,
@@ -81,7 +99,7 @@ function schemaHash(schema) {
     context: schema.context,
     field_sets: schema.field_sets,
     kinds: schema.kinds,
-    fields: schema.fields,
+    fields: Object.fromEntries(Object.entries(schema.fields).map(([name, field]) => [name, modelField(field)])),
   });
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
@@ -104,6 +122,15 @@ export function normalizeSchema(input, source = "BURO schema") {
   for (const [name, field] of Object.entries(input.fields)) {
     validateFieldDefinition(name, field);
     fields[name] = field;
+  }
+
+  const sections = input.sections || {};
+  if (!plainObject(sections)) throw new Error(`${source} sections must be an object`);
+  for (const [name, section] of Object.entries(sections)) {
+    if (!plainObject(section)) throw new Error(`${source} section ${name} must be an object`);
+    rejectUnknownKeys(section, SECTION_KEYS, `${source} section ${name}`);
+    requireSingleLine(section.guide, `${source} section ${name}.guide`);
+    if (section.draft_guide !== undefined) requireSingleLine(section.draft_guide, `${source} section ${name}.draft_guide`);
   }
 
   const fieldSets = input.field_sets || {};
@@ -163,12 +190,18 @@ export function normalizeSchema(input, source = "BURO schema") {
       throw new Error(`${source} field ${name} targets unknown kind: ${field.target_kind}`);
     }
   }
+  for (const sectionName of Object.keys(sections)) {
+    if (!Object.values(fields).some((field) => (field.section || "facts") === sectionName)) {
+      throw new Error(`${source} section ${sectionName} is not used by any field`);
+    }
+  }
 
   const normalized = {
     id,
     version: input.version,
     default_kind: defaultKind,
     context,
+    sections,
     field_sets: fieldSets,
     kinds,
     fields,

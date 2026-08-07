@@ -118,7 +118,7 @@ function optionalFieldToYaml(name, field) {
 }
 
 function requiredFieldToYaml(name, field) {
-  const guide = field.guide ? [`# REQUIRED — ${field.guide}`] : ["# REQUIRED"];
+  const guide = field.guide ? [`# ${name} — ${field.guide}`, "# REQUIRED"] : ["# REQUIRED"];
   if (field.type === "record") {
     return [
       ...guide,
@@ -138,6 +138,19 @@ function requiredFieldToYaml(name, field) {
   }
   if (field.type === "string-list") return [...guide, `${name}: []`];
   return [...guide, `${name}:`];
+}
+
+function populatedFieldToYaml(name, value, field) {
+  return [...(field.guide ? [`# ${name} — ${field.guide}`] : []), ...fieldToYaml(name, value, field)];
+}
+
+function sectionGuideToYaml(name, schema) {
+  const section = schema.sections?.[name];
+  if (!section) return [];
+  return [
+    `# ${name.toUpperCase()} — ${section.guide}`,
+    ...(section.draft_guide ? [`# Draft: ${section.draft_guide}`] : []),
+  ];
 }
 
 function orderedSections(entity, schema) {
@@ -177,7 +190,7 @@ export function entityToDraftYaml(entity = {}, schema, options = {}) {
     `kind: ${scalarToYaml(normalized.kind)}`,
   ];
   for (const section of orderedSections(normalized, schema)) {
-    lines.push("");
+    lines.push("", ...sectionGuideToYaml(section.name, schema));
     let optionalOpen = false;
     for (const fieldName of section.fields) {
       const field = schema.fields[fieldName];
@@ -185,7 +198,7 @@ export function entityToDraftYaml(entity = {}, schema, options = {}) {
       if (!valuePresent(value) && field.draft_optional === false) continue;
       if (valuePresent(value)) {
         optionalOpen = false;
-        lines.push(...fieldToYaml(fieldName, value, field));
+        lines.push(...populatedFieldToYaml(fieldName, value, field));
       } else if (field.required) {
         optionalOpen = false;
         lines.push(...requiredFieldToYaml(fieldName, field));

@@ -129,7 +129,7 @@ buro <id>                       render one entity
 buro current                    render current-context information
 buro list [kind]                list entities, optionally by kind
 buro schema                     show the active preset
-buro schema <kind>              show fields, types, and guides for one kind
+buro schema <kind>              show sections, fields, types, and guides for one kind
 
 buro draft pull <id>            prepare an edit
 buro draft new <id> [kind]      prepare a creation
@@ -175,6 +175,11 @@ and only the fields allowed for that kind. BURO supports nine finite field
 types, including references and nested records. Unknown fields fail before
 data changes; top-level references are checked against their declared target
 kind.
+
+Preset guidance makes that structure self-explanatory. A rendered entity
+briefly explains every populated section and field; a draft preserves those
+descriptions and can add preset-defined instructions for filling a section
+correctly. The guidance is presentation metadata, not stored entity data.
 
 The small [`starter`](./presets/starter.yaml) preset is the default. It covers
 hosts, projects, services, and documents on one machine or many. The bundled

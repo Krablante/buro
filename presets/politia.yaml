@@ -1,5 +1,5 @@
 id: politia
-version: 3
+version: 4
 default_kind: project
 
 context:
@@ -7,6 +7,34 @@ context:
   alias_field: lan_names
   member_field: host
   root_field: politia_root
+
+sections:
+  identity:
+    guide: Names and classifications that identify the Politia entity.
+  location:
+    guide: Verified host ownership and filesystem location of the entity.
+  repository:
+    guide: Source repositories and the Git identity used to maintain them.
+  summary:
+    guide: A short verified explanation of what the entity is and why it exists.
+    draft_guide: Describe the entity itself, not the current task, status update, or aspiration.
+  read_first:
+    guide: Canonical documents to read before working on the entity.
+    draft_guide: List only authoritative starting points, in useful reading order.
+  important:
+    guide: Important rules that must be remembered while working with the entity.
+    draft_guide: Add only rules that materially affect how work must be performed.
+  avoid:
+    guide: Actions and assumptions that are unsafe or forbidden for the entity.
+    draft_guide: State concrete prohibitions or unsafe assumptions, not generic cautions.
+  related:
+    guide: Related paths, entities, or resources that provide useful operational context.
+    draft_guide: Include only useful relationships and explain why each one matters.
+  use_skills:
+    guide: Skills and procedures that should own or support work on the entity.
+    draft_guide: Name only relevant workflows and explain when each one applies.
+  host:
+    guide: Role, connectivity, capabilities, filesystem roots, and operating constraints of the host.
 
 field_sets:
   entity:
@@ -126,19 +154,20 @@ fields:
       id: { type: string, required: true }
       note: { type: text }
 
-  role: { type: string, section: host }
-  description: { type: text, section: host }
-  availability: { type: string, section: host }
-  lan_ipv4: { type: string, section: host }
-  lan_names: { type: string-list, section: host }
-  politia_user: { type: string, section: host }
-  politia_root: { type: string, section: host }
-  state_root: { type: string, section: host }
-  ssh_target: { type: string, section: host }
-  capabilities: { type: string-list, section: host }
+  role: { type: string, section: host, guide: operational role of the host }
+  description: { type: text, section: host, guide: short verified description of the host }
+  availability: { type: string, section: host, guide: expected availability of the host }
+  lan_ipv4: { type: string, section: host, guide: primary IPv4 address on the local network }
+  lan_names: { type: string-list, section: host, guide: hostnames and aliases used on the local network }
+  politia_user: { type: string, section: host, guide: operating-system user that owns Politia }
+  politia_root: { type: string, section: host, guide: absolute path to the Politia workspace root }
+  state_root: { type: string, section: host, guide: absolute path for mutable Politia runtime state }
+  ssh_target: { type: string, section: host, guide: SSH target used to reach the host }
+  capabilities: { type: string-list, section: host, guide: tools and services available on the host }
   git_identities:
     type: record-list
     section: host
+    guide: Git identities and CLI contexts available on the host
     fields:
       user_name: { type: string, required: true }
       user_email: { type: string, required: true }
@@ -147,8 +176,9 @@ fields:
   git_enforcement:
     type: record
     section: host
+    guide: Git identity enforcement applied on the host
     fields:
       guard_profile: { type: string }
       hooks_path: { type: string }
-  politia_geometry: { type: string-list, section: host }
-  enabled: { type: boolean, section: host, default: true }
+  politia_geometry: { type: string-list, section: host, guide: filesystem layout rules that apply on the host }
+  enabled: { type: boolean, section: host, default: true, guide: whether the host is active in Politia }

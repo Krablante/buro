@@ -123,6 +123,26 @@ function selectedDiff(output) {
   return [...lines.slice(0, 3), "", fromLabel, toLabel, "  …", ...active].join("\n");
 }
 
+function selectedDraft(draft, parsed) {
+  const lines = draft.split("\n");
+  const location = lines.find((line) => line.startsWith("# LOCATION — "));
+  const root = lines.find((line) => line.startsWith("# root — "));
+  const summaryIndex = lines.findIndex((line) => line.startsWith("# SUMMARY — "));
+  const summary = lines.find((line) => line.startsWith("# summary — "));
+  const values = [location, root, summaryIndex >= 0 ? lines[summaryIndex] : null, summaryIndex >= 0 ? lines[summaryIndex + 1] : null, summary];
+  if (values.some((value) => !value)) fail("generated draft no longer exposes the expected section and field guidance");
+  return [
+    location,
+    root,
+    `root: ${parsed.root}`,
+    "",
+    lines[summaryIndex],
+    lines[summaryIndex + 1],
+    summary,
+    `summary: ${parsed.summary}`,
+  ].join("\n");
+}
+
 function selectedCurrent(output) {
   const prefixes = [
     "## BURO Current Context",
@@ -132,6 +152,7 @@ function selectedCurrent(output) {
     "Name:",
     "Context:",
     "LOCATION:",
+    "  # ",
     "  root:",
     "SUMMARY:",
     "  summary:",
@@ -139,15 +160,16 @@ function selectedCurrent(output) {
     "No entities in the current context.",
   ];
   const lines = output.split("\n").filter((line) => prefixes.some((prefix) => line.startsWith(prefix)));
-  if (lines.length !== prefixes.length) fail(`buro current demo selection changed: expected ${prefixes.length} lines, found ${lines.length}`);
+  const expectedLines = 16;
+  if (lines.length !== expectedLines) fail(`buro current demo selection changed: expected ${expectedLines} lines, found ${lines.length}`);
   return [
     ...lines.slice(0, 3),
     "",
     ...lines.slice(3, 6),
     "",
-    ...lines.slice(6, 10),
+    ...lines.slice(6, 14),
     "",
-    ...lines.slice(10),
+    ...lines.slice(14),
   ].join("\n");
 }
 
@@ -158,7 +180,7 @@ async function captureFlow(language, workDir) {
   const draftPath = path.join(instanceRoot, "BURO_DRAFT.yaml");
 
   const init = normalizePaths(runCli(["init"], env), env);
-  requireText(init, "Preset: starter v1", "buro init");
+  requireText(init, "Preset: starter v2", "buro init");
   requireText(init, "Next: buro draft new workstation host", "buro init");
 
   const draftReady = normalizePaths(runCli(["draft", "new", "workstation", "host"], env), env);
@@ -172,9 +194,7 @@ async function captureFlow(language, workDir) {
   await writeFile(draftPath, draft, { encoding: "utf8", mode: 0o600 });
 
   const parsedDraft = yaml.load(draft);
-  const draftExcerpt = ["id", "name", "kind", "root", "summary"]
-    .map((name) => `${name}: ${parsedDraft[name]}`)
-    .join("\n");
+  const draftExcerpt = selectedDraft(draft, parsedDraft);
 
   const diff = normalizePaths(runCli(["draft", "diff"], env), env);
   requireText(diff, "+ root: ~/workspace", "buro draft diff");
@@ -186,6 +206,7 @@ async function captureFlow(language, workDir) {
   const current = normalizePaths(runCli(["current"], env), env);
   requireText(current, "BURO Entity: host:workstation", "buro current");
   requireText(current, "Context: workstation (current)", "buro current");
+  requireText(current, "# Where the entity lives and which host owns it.", "buro current");
   requireText(current, `summary: ${copy.summary}`, "buro current");
 
   const listed = runCli(["list", "host"], env);

@@ -22,7 +22,7 @@ buro serve --host 127.0.0.1 --port 8765
 
 ## Politia maintainer deployment
 
-The repository's `npm run deploy:politia` / `npm run deploy:live` script is the real Politia operator deployment, not a generic installer. It packs once, writes explicit `politia` central/client configs, installs the package centrally, takes an online backup, restarts the API, installs the same package on reachable workers, verifies generic entity output, and removes package artifacts. Worker topology comes from `buro list host`; `BURO_WORKER_HOSTS` overrides discovery.
+The repository's `npm run deploy:politia` / `npm run deploy:live` script is the real Politia operator deployment, not a generic installer. It packs once, writes explicit `politia` central/client configs, installs the package centrally, stops the API, runs `buro init` to take an online backup and validate/adopt the active compatible preset, restarts the API, installs the same package on reachable workers, verifies the active preset and guided entity output on every surface, and removes package artifacts. Worker topology comes from `buro list host`; `BURO_WORKER_HOSTS` overrides discovery.
 
 ```sh
 npm run deploy:politia -- --dry-run
