@@ -116,6 +116,9 @@ tarball="$PACK_DIR/$package_name"
 node_bin_dir=$(dirname "$(command -v node)")
 sudo_node_path="$node_bin_dir:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+log "verify README terminal demos"
+run npm run demos:check
+
 log "pack"
 run mkdir -p "$PACK_DIR"
 run npm pack --pack-destination "$PACK_DIR"

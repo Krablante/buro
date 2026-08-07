@@ -67,6 +67,16 @@ flowchart LR
   DB -. snapshot .-> B[(backups)]
 ```
 
+## 🎬 The draft loop, for real
+
+<p align="center">
+  <img alt="BURO terminal demo: initialize a starter registry, fill a host draft, review the diff, push it, and render the current context" src="./assets/demo-en.gif" width="900">
+</p>
+
+This is generated from the real CLI against a disposable `starter` instance:
+initialize, prepare one schema-shaped draft, fill verified facts, inspect the
+diff, push, ask. No live registry or hand-written terminal output is involved.
+
 ## 🥊 The alternatives, unfortunately
 
 | The problem | The popular answer | Why it fails | BURO |

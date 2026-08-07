@@ -41,6 +41,8 @@
   ],
   "scripts": {
     "start": "node src/index.js",
+    "demos": "node scripts/generate-demos.mjs",
+    "demos:check": "node scripts/generate-demos.mjs --check",
     "deploy:politia": "bash scripts/deploy-live.sh",
     "deploy:live": "bash scripts/deploy-live.sh"
   },

@@ -31,6 +31,19 @@ npm run deploy:politia
 
 An offline worker is reported and left untouched. Copy, install, cleanup, or configuration failure on a reachable worker fails the deployment.
 
+## README terminal demos
+
+The English and Russian README GIFs are reproducible release artifacts, not hand-written terminal mockups. The generator creates an isolated temporary `starter` instance, runs the source CLI through `init`, draft creation, diff, push, `current`, and `list`, then renders only that captured output. It never opens the configured operator database or draft.
+
+```sh
+npm run demos
+npm run demos:check
+```
+
+The first command regenerates `assets/demo-en.gif` and `assets/demo-ru.gif`. The second performs the same real CLI flow in temporary state and fails if either committed GIF differs. The official Politia deployment runs that check before `npm pack`, so it cannot ship stale demos while generic package consumers do not inherit a media-build requirement.
+
+Rendering requires `ffmpeg` with the `ass`, `palettegen`, and `paletteuse` filters plus DejaVu Sans and DejaVu Sans Mono. The generator discovers the usual Linux font directories; set `BURO_DEMO_FONTS_DIR` for another location. No npm build dependency or background service is added.
+
 ## Verification
 
 Verification uses real source, SQLite, export/import, API, draft, package, service, and worker surfaces. This repository deliberately keeps no unit, integration, or smoke-test files; the operator workflow validates the actual interfaces that users and agents run.
