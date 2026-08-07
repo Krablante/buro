@@ -39,6 +39,12 @@ function httpError(message, status) {
   return error;
 }
 
+function requestRevision(request) {
+  const value = request.headers["if-match"];
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  return value.trim().replace(/^W\//, "").replace(/^"|"$/g, "");
+}
+
 async function readJsonBody(request) {
   let body = "";
   for await (const chunk of request) {
@@ -69,7 +75,7 @@ export function createApiServer(options = {}) {
   return createServer(async (request, response) => {
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
     const path = url.pathname.replace(/\/$/, "") || "/";
-    const currentHost = url.searchParams.get("current_host") || config.currentHost;
+    const currentContext = url.searchParams.get("current_context") || config.currentContext;
 
     try {
       if (path === "/health") {
@@ -86,7 +92,8 @@ export function createApiServer(options = {}) {
           methodNotAllowed(response);
           return;
         }
-        sendJson(response, 200, { schema: await resolveSchema(config) });
+        const { source: _source, hash: _hash, core_fields: _coreFields, ...schema } = await resolveSchema(config);
+        sendJson(response, 200, { schema });
         return;
       }
 
@@ -111,7 +118,10 @@ export function createApiServer(options = {}) {
           return;
         }
         if (request.method === "PUT") {
-          const entity = await updateEntityRecord(entityId, await readJsonBody(request), config);
+          const entity = await updateEntityRecord(entityId, await readJsonBody(request), {
+            ...config,
+            expectedUpdatedAt: requestRevision(request),
+          });
           if (!entity) {
             notFound(response, `entity not found: ${entityId}`);
             return;
@@ -120,7 +130,7 @@ export function createApiServer(options = {}) {
           return;
         }
         if (request.method === "DELETE") {
-          const deleted = await deleteEntityRecord(entityId, config);
+          const deleted = await deleteEntityRecord(entityId, { ...config, expectedUpdatedAt: requestRevision(request) });
           if (!deleted) {
             notFound(response, `entity not found: ${entityId}`);
             return;
@@ -148,7 +158,7 @@ export function createApiServer(options = {}) {
           return;
         }
         const entityId = decodeURIComponent(path.slice("/packet/entity/".length));
-        const packet = await resolveEntityPacket(entityId, { ...config, currentHost });
+        const packet = await resolveEntityPacket(entityId, { ...config, currentContext });
         if (!packet) {
           notFound(response, `entity not found: ${entityId}`);
           return;

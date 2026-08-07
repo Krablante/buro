@@ -14,20 +14,26 @@ export function renderUsage(schema) {
     "  buro current",
     "  buro list [kind]",
     "  buro schema",
+    "  buro schema <kind>",
     "  buro draft pull <id>",
     "  buro draft new <id> [kind]",
     "  buro draft delete <id>",
     "  buro draft diff",
     "  buro draft push",
     "  buro draft clear",
+    "  buro export <file>",
+    "  buro import <file> [--adopt]",
+    "  buro --version",
     "  buro help",
     "",
     "Commands:",
     "  <id>          Render one entity.",
     "  current       Render current-context information for agent prompts.",
     "  list [kind]   List all entities, optionally filtered by kind.",
-    "  schema        Show the active preset and entity kinds.",
+    "  schema        Show the active preset; add a kind for its field guide.",
     "  draft         Review and apply the one local YAML draft.",
+    "  export        Write a complete portable registry manifest.",
+    "  import        Validate and atomically replace from a manifest.",
     "  help          Show this usage and the default-kind field guide.",
     "",
     "How to edit entities:",
@@ -50,6 +56,24 @@ export function renderSchemaSummary(schema) {
   ].join("\n")}\n`;
 }
 
+export function renderKindSchema(schema, kind) {
+  const definition = schema.kinds[kind];
+  if (!definition) throw new Error(`unsupported entity kind: ${kind}`);
+  const lines = [
+    `BURO kind: ${kind}`,
+    `preset: ${schema.id} v${schema.version}`,
+    "fields:",
+    "- id (string, required): stable entity id",
+    "- name (string, required): human-readable name",
+    "- kind (string, required): entity kind",
+  ];
+  for (const name of definition.fields) {
+    const field = schema.fields[name];
+    lines.push(`- ${name} (${field.type}${field.required ? ", required" : ""}): ${field.guide || "no guide"}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 export function renderCliError(error) {
   return `BURO error: ${error instanceof Error ? error.message : String(error)}\n`;
 }
@@ -59,13 +83,13 @@ export function renderEntityListLine(entity, currentContext) {
   return `${entity.kind}\t${entity.id}\t${entity.name}${marker}`;
 }
 
-export function renderCurrentContext({ currentContext, home, instanceRoot, packetText, members, schema }) {
+export function renderCurrentContext({ currentContext, home, contextRoot, packetText, members }) {
   const lines = [
-    schema.id === "politia" ? "## Additional Politia Info" : "## Additional BURO Info",
+    "## BURO Current Context",
     "",
     "source: buro current",
     `home: ${home || "-"}`,
-    `instance_root: ${instanceRoot || "-"}`,
+    `context_root: ${contextRoot || "-"}`,
     `current_context: ${currentContext || "-"}`,
     "",
     "[buro current context]",

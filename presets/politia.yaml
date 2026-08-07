@@ -1,5 +1,5 @@
 id: politia
-version: 2
+version: 3
 default_kind: project
 
 context:
@@ -7,7 +7,6 @@ context:
   alias_field: lan_names
   member_field: host
   root_field: politia_root
-  state_root_field: state_root
 
 field_sets:
   entity:
@@ -23,34 +22,6 @@ field_sets:
     - avoid
     - related
     - use_skills
-  project_details:
-    - config_format
-    - config_path
-    - configuration
-    - hosts_visibility
-    - installed_service_unit
-    - interface
-    - kernel_registry
-    - minimum_codex_version
-    - platform_support
-    - product_interface
-    - public_release_version
-    - public_root_commit
-    - renderer_status
-    - repo_visibility
-    - routing_model
-    - runtime_state_path
-    - service_unit
-    - studio_ingress_host
-    - studio_state_path
-    - studio_ui
-    - studio_upstream
-    - studio_url
-    - sync_mode
-    - telegram_languages
-    - telegram_mode
-  service_details:
-    - secret_env_file
   host:
     - role
     - description
@@ -71,10 +42,10 @@ field_sets:
 kinds:
   project:
     label: project
-    field_sets: [entity, project_details]
+    field_sets: [entity]
   service:
     label: service
-    field_sets: [entity, service_details]
+    field_sets: [entity]
   external:
     label: external
     field_sets: [entity]
@@ -181,30 +152,3 @@ fields:
       hooks_path: { type: string }
   politia_geometry: { type: string-list, section: host }
   enabled: { type: boolean, section: host, default: true }
-
-  config_format: { type: string, section: details, packet: false, draft_optional: false }
-  config_path: { type: string, section: details, packet: false, draft_optional: false }
-  configuration: { type: string, section: details, packet: false, draft_optional: false }
-  hosts_visibility: { type: string, section: details, packet: false, draft_optional: false }
-  installed_service_unit: { type: string, section: details, packet: false, draft_optional: false }
-  interface: { type: string, section: details, packet: false, draft_optional: false }
-  kernel_registry: { type: string, section: details, packet: false, draft_optional: false }
-  minimum_codex_version: { type: string, section: details, packet: false, draft_optional: false }
-  platform_support: { type: string, section: details, packet: false, draft_optional: false }
-  product_interface: { type: string, section: details, packet: false, draft_optional: false }
-  public_release_version: { type: string, section: details, packet: false, draft_optional: false }
-  public_root_commit: { type: string, section: details, packet: false, draft_optional: false }
-  renderer_status: { type: string, section: details, packet: false, draft_optional: false }
-  repo_visibility: { type: string, section: details, packet: false, draft_optional: false }
-  routing_model: { type: string, section: details, packet: false, draft_optional: false }
-  runtime_state_path: { type: string, section: details, packet: false, draft_optional: false }
-  service_unit: { type: string, section: details, packet: false, draft_optional: false }
-  studio_ingress_host: { type: string, section: details, packet: false, draft_optional: false }
-  studio_state_path: { type: string, section: details, packet: false, draft_optional: false }
-  studio_ui: { type: string, section: details, packet: false, draft_optional: false }
-  studio_upstream: { type: string, section: details, packet: false, draft_optional: false }
-  studio_url: { type: string, section: details, packet: false, draft_optional: false }
-  sync_mode: { type: string, section: details, packet: false, draft_optional: false }
-  telegram_languages: { type: string, section: details, packet: false, draft_optional: false }
-  telegram_mode: { type: string, section: details, packet: false, draft_optional: false }
-  secret_env_file: { type: string, section: details, packet: false, draft_optional: false }

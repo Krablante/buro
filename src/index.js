@@ -7,7 +7,7 @@ function isMainModule() {
 }
 
 if (isMainModule()) {
-  await serve({ apiHost: "0.0.0.0" });
+  await serve({ apiHost: "127.0.0.1" });
 }
 
 export { createApiServer, serve } from "./api.js";

@@ -9,14 +9,17 @@ async function getJson(baseUrl, path) {
   return requestJson(baseUrl, path);
 }
 
-async function requestJson(baseUrl, path, { method = "GET", body } = {}) {
+async function requestJson(baseUrl, path, { method = "GET", body, revision } = {}) {
   const url = endpoint(baseUrl, path);
   const signal = AbortSignal.timeout(API_TIMEOUT_MS);
   let response;
   try {
     response = await fetch(url, {
       method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      headers: {
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(revision ? { "If-Match": `"${revision}"` } : {}),
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
     });
@@ -45,10 +48,10 @@ async function requestJson(baseUrl, path, { method = "GET", body } = {}) {
   return payload;
 }
 
-function currentHostQuery(currentHost) {
-  return currentHost === undefined || currentHost === null || currentHost === ""
+function currentContextQuery(currentContext) {
+  return currentContext === undefined || currentContext === null || currentContext === ""
     ? ""
-    : `?current_host=${encodeURIComponent(currentHost)}`;
+    : `?current_context=${encodeURIComponent(currentContext)}`;
 }
 
 export function createApiClient(baseUrl) {
@@ -58,10 +61,10 @@ export function createApiClient(baseUrl) {
     entity: (id) => getJson(baseUrl, `/entities/${encodeURIComponent(id)}`),
     createEntity: (id, entity = {}) =>
       requestJson(baseUrl, `/entities/${encodeURIComponent(id)}`, { method: "POST", body: entity }),
-    updateEntity: (id, entity) =>
-      requestJson(baseUrl, `/entities/${encodeURIComponent(id)}`, { method: "PUT", body: entity }),
-    deleteEntity: (id) => requestJson(baseUrl, `/entities/${encodeURIComponent(id)}`, { method: "DELETE" }),
-    entityPacket: (id, currentHost) =>
-      getJson(baseUrl, `/packet/entity/${encodeURIComponent(id)}${currentHostQuery(currentHost)}`),
+    updateEntity: (id, entity, revision) =>
+      requestJson(baseUrl, `/entities/${encodeURIComponent(id)}`, { method: "PUT", body: entity, revision }),
+    deleteEntity: (id, revision) => requestJson(baseUrl, `/entities/${encodeURIComponent(id)}`, { method: "DELETE", revision }),
+    entityPacket: (id, currentContext) =>
+      getJson(baseUrl, `/packet/entity/${encodeURIComponent(id)}${currentContextQuery(currentContext)}`),
   };
 }

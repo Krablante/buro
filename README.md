@@ -54,7 +54,7 @@ and press the stamp.
 
 The resolver is the only data door. The CLI and the HTTP API open the same
 door, obey the same rules, and cannot invent fields. A preset defines what may
-exist; SQLite is the single copy of truth; the supported operator write path
+exist; SQLite is the single copy of truth; the ordinary operator write path
 starts with one reviewed YAML draft.
 
 ```mermaid
@@ -67,17 +67,6 @@ flowchart LR
   DB -. snapshot .-> B[(backups)]
 ```
 
-## 🎬 Watch it do the thing
-
-<p align="center">
-  <img alt="BURO terminal demo: initialize a registry, review a draft, push it, and render the entity" src="./assets/demo-en.gif" width="900">
-</p>
-
-The loop is deliberately boring: initialize, prepare one schema-shaped draft,
-edit verified facts, inspect the diff, push, ask. Missing fields stay
-commented; unknown fields do not exist. The draft stays local even in client
-mode — only the validated entity crosses the HTTP transport.
-
 ## 🥊 The alternatives, unfortunately
 
 | The problem | The popular answer | Why it fails | BURO |
@@ -85,7 +74,7 @@ mode — only the validated entity crosses the HTTP transport.
 | Where do agent facts live? | RAG: embed everything, hope | probabilistic answers, silent drift, a permanent vector bill | a typed SQLite registry: verified once, rendered deterministically |
 | How do agents learn the rules? | `AGENTS.md`, `CLAUDE.md`, `.cursor/rules` | files drift and get lost; you keep reminding agents to read them | `buro current` — one command, one packet, every session |
 | What if I have many machines? | a context platform: pipelines, plugins, providers | you now operate a second infrastructure forever | local / central / client — one resolver, no database copies on workers |
-| How do operators write? | anyone edits anything, any time | context rots into noise | one supported write workflow: reviewed draft, diff, then push |
+| How do operators write? | anyone edits anything, any time | context rots into noise | one ordinary write workflow: reviewed draft, diff, then push |
 
 ## 🚀 Put it on your machine
 
@@ -98,14 +87,30 @@ npm install
 npm link
 
 buro init
-buro schema
-buro list
+buro draft new "$(hostname -s)" host
+$EDITOR ~/.local/share/buro/BURO_DRAFT.yaml
+buro draft diff
+buro draft push
+buro current
 ```
 
 `buro init` creates a local instance under `~/.local/share/buro`. The database
 defaults to `~/.local/share/buro/state/buro/buro.sqlite3`; backups sit beside
 it under `state/buro/backups/sqlite`, and the draft stays at the instance root.
 None of them touches the source tree.
+
+The default `starter` preset asks for two required host facts: its workspace
+root and a short summary. The generated draft shows exactly where they go. Add
+your first project with `buro draft new my-project`, review it, push it, and the
+project appears under `buro current` after its `host` field points at the
+current host.
+
+An agent needs one stable bootstrap instruction, not a directory of rules:
+
+```text
+Ask BURO first: run `buro current`, then `buro <id>` for the entity in scope.
+Treat rendered BURO facts and constraints as authoritative.
+```
 
 ## ⌨️ The commands you actually need
 
@@ -114,6 +119,7 @@ buro <id>                       render one entity
 buro current                    render current-context information
 buro list [kind]                list entities, optionally by kind
 buro schema                     show the active preset
+buro schema <kind>              show fields, types, and guides for one kind
 
 buro draft pull <id>            prepare an edit
 buro draft new <id> [kind]      prepare a creation
@@ -121,10 +127,14 @@ buro draft delete <id>          prepare a deletion
 buro draft diff                 review the draft
 buro draft push                 apply the draft
 buro draft clear                discard the draft
+buro export <file>              export the complete registry
+buro import <file> [--adopt]    validate and atomically replace the registry
+buro --version                  show the installed version
 ```
 
-That is the whole admin surface: `buro init`, `buro backup`, and
-`buro serve`. It stays that way.
+The remaining admin surface is `buro init`, `buro backup`, and `buro serve`.
+Export/import is the deliberate portability and whole-schema migration path;
+ordinary writes still go through one reviewed draft.
 
 ## 🏠 Three operating modes
 
@@ -139,7 +149,7 @@ Client configuration lives in `~/.config/buro/config.json`:
 ```json
 {
   "mode": "client",
-  "current_host": "worker-a",
+  "current_context": "worker-a",
   "central_host": "registry",
   "api_url": "http://registry:8765"
 }
@@ -156,9 +166,12 @@ types, including references and nested records. Unknown fields fail before
 data changes; top-level references are checked against their declared target
 kind.
 
-The bundled [`politia`](./presets/politia.yaml) preset is both a complete
-public example and the model Politia runs on. It contains no private instance
-entities and no deployment topology.
+The small [`starter`](./presets/starter.yaml) preset is the default. It covers
+hosts, projects, services, and documents on one machine or many. The bundled
+[`politia`](./presets/politia.yaml) preset is the real production vocabulary
+used by Politia. Both contain structure only. Select a bundled preset with
+`preset` or `BURO_PRESET`; point `schema_path` or `BURO_SCHEMA_PATH` at your own
+declarative YAML to replace the vocabulary without changing the engine.
 
 ## 🌐 HTTP surface
 
@@ -170,13 +183,14 @@ GET    /entities/:id
 POST   /entities/:id
 PUT    /entities/:id
 DELETE /entities/:id
-GET    /packet/entity/:id?current_host=<id>
+GET    /packet/entity/:id?current_context=<id>
 ```
 
 The API is an optional transport, not a second implementation. Its mutation
 routes carry client-mode draft pushes as validated entity JSON; the server does
-not store a second draft. Local and multihost installations keep the same
-validation and packet contracts.
+not store a second draft. Updates and deletes carry the entity revision through
+`If-Match`, so a stale draft cannot overwrite newer facts. Local and multihost
+installations keep the same validation and packet contracts.
 
 There is deliberately no authentication or TLS in the built-in server. Bind
 it to loopback or expose it only on a trusted private network behind your own

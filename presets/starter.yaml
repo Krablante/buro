@@ -1,0 +1,95 @@
+id: starter
+version: 1
+default_kind: project
+
+context:
+  kind: host
+  alias_field: aliases
+  member_field: host
+  root_field: root
+
+field_sets:
+  resource:
+    - host
+    - path
+    - repo
+    - summary
+    - read_first
+    - important
+    - avoid
+    - related
+  host:
+    - aliases
+    - root
+    - address
+    - ssh_target
+    - summary
+    - important
+    - avoid
+
+kinds:
+  project:
+    field_sets: [resource]
+  service:
+    field_sets: [resource]
+  document:
+    field_sets: [resource]
+  host:
+    field_sets: [host]
+
+fields:
+  host:
+    type: ref
+    target_kind: host
+    section: location
+    guide: host that owns this entity
+  path:
+    type: string
+    section: location
+    guide: verified absolute path to the entity
+  repo:
+    type: string
+    section: repository
+    guide: primary repository URL
+  summary:
+    type: text
+    section: summary
+    required: true
+    guide: short verified description
+  read_first:
+    type: string-list
+    section: read_first
+    guide: files or documents to read first
+  important:
+    type: string-list
+    section: important
+    guide: facts that must affect the work
+  avoid:
+    type: string-list
+    section: avoid
+    guide: things an agent must not do or assume
+  related:
+    type: record-list
+    section: related
+    guide: related entities or resources
+    fields:
+      target: { type: string, required: true }
+      note: { type: text }
+
+  aliases:
+    type: string-list
+    section: identity
+    guide: alternate names for this host
+  root:
+    type: string
+    section: location
+    required: true
+    guide: workspace root on this host
+  address:
+    type: string
+    section: host
+    guide: network address when applicable
+  ssh_target:
+    type: string
+    section: host
+    guide: SSH target when applicable

@@ -33,6 +33,7 @@
   "files": [
     "src/",
     "presets/",
+    "scripts/",
     "docs/",
     "assets/",
     "README.md",
@@ -40,6 +41,7 @@
   ],
   "scripts": {
     "start": "node src/index.js",
+    "deploy:politia": "bash scripts/deploy-live.sh",
     "deploy:live": "bash scripts/deploy-live.sh"
   },
   "dependencies": {

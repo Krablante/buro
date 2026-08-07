@@ -66,6 +66,20 @@ async function withDatabase(database, callback, options = {}) {
   }
 }
 
+export async function withWriteTransaction(database, callback) {
+  return withDatabase(database, async (db) => {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = await callback(db);
+      db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      try { db.exec("ROLLBACK"); } catch {}
+      throw error;
+    }
+  });
+}
+
 function tableExists(db, table) {
   return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table));
 }
@@ -76,48 +90,95 @@ function unsupportedTables(db) {
   ).all().map((row) => row.name);
 }
 
-function writeMeta(db, schema) {
-  db.prepare(
-    `INSERT INTO buro_meta (key, value, updated_at) VALUES (?, ?, ?)
-     ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-  ).run("schema", JSON.stringify({
-    version: 2,
+function schemaBinding(schema) {
+  return {
+    storage_version: 2,
     engine: "sqlite",
     model: "configurable-entities",
     preset: schema.id,
     preset_version: schema.version,
-  }), now());
+    preset_hash: schema.hash,
+  };
 }
 
-export async function initDb(database, schema) {
+export function readSchemaBinding(db) {
+  if (!tableExists(db, "buro_meta")) return null;
+  const row = db.prepare("SELECT value FROM buro_meta WHERE key = ?").get("schema");
+  if (!row) return null;
+  try {
+    return JSON.parse(row.value);
+  } catch (error) {
+    throw new Error(`invalid BURO schema metadata: ${error.message}`);
+  }
+}
+
+export function writeSchemaBinding(db, schema) {
+  db.prepare(
+    `INSERT INTO buro_meta (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run("schema", JSON.stringify(schemaBinding(schema)), now());
+}
+
+function bindingMismatch(binding, schema) {
+  if (!binding) return "database has no preset binding";
+  if (binding.preset !== schema.id) return `database uses preset ${binding.preset}, active preset is ${schema.id}`;
+  if (binding.preset_version !== schema.version) {
+    return `database uses ${schema.id} v${binding.preset_version}, active preset is v${schema.version}`;
+  }
+  if (!binding.preset_hash) return "database preset binding has no schema hash";
+  if (binding.preset_hash !== schema.hash) {
+    return `database preset hash differs from ${schema.id} v${schema.version}`;
+  }
+  return null;
+}
+
+export function assertSchemaBinding(db, schema) {
+  const mismatch = bindingMismatch(readSchemaBinding(db), schema);
+  if (mismatch) throw new Error(`${mismatch}; run \`buro init\` to validate and adopt it, or \`buro import <file>\` to migrate`);
+}
+
+export async function initDb(database, schema, options = {}) {
   if (hasDatabase(database)) {
     const unsupported = unsupportedTables(database);
     if (unsupported.length) throw new Error(`unsupported BURO tables: ${unsupported.join(", ")}`);
     database.exec(schemaSql);
+    const binding = readSchemaBinding(database);
+    const mismatch = bindingMismatch(binding, schema);
+    const entityCount = database.prepare("SELECT count(*) AS count FROM entities").get().count;
+    if (binding?.preset && binding.preset !== schema.id) {
+      throw new Error(`${mismatch}; changing preset identity requires \`buro import <file>\``);
+    }
+    if (binding?.preset_hash && binding.preset_version === schema.version && binding.preset_hash !== schema.hash) {
+      throw new Error(`${mismatch}; increment the preset version before adoption`);
+    }
+    if (!binding && entityCount > 0 && !options.adoptSchema) {
+      throw new Error(`${mismatch}; run \`buro init\` explicitly to adopt it`);
+    }
+    if (mismatch && binding && !options.adoptSchema) throw new Error(`${mismatch}; run \`buro init\` explicitly to adopt it`);
     for (const row of database.prepare("SELECT id, name, kind, data, updated_at FROM entities").iterate()) {
       rowToEntity(row, schema);
     }
-    writeMeta(database, schema);
-    return;
+    writeSchemaBinding(database, schema);
+    return { adopted: Boolean(binding && mismatch), binding: schemaBinding(schema) };
   }
   const databasePath = configuredDatabasePath(database);
   await mkdir(path.dirname(databasePath), { recursive: true });
   const db = openDatabase(databasePath);
   try {
-    await initDb(db, schema);
+    return await initDb(db, schema, options);
   } finally {
     db.close();
   }
 }
 
-function entityValues(entity, schema) {
+function entityValues(entity, schema, options = {}) {
   const normalized = normalizeEntity(entity, schema);
   return [
     normalized.id,
     normalized.name,
     normalized.kind,
     JSON.stringify(entityData(normalized, schema)),
-    now(),
+    options.preserveUpdatedAt && normalized.updated_at ? normalized.updated_at : now(),
   ];
 }
 
@@ -147,18 +208,20 @@ export async function backupDatabase(database, options = {}) {
   return target;
 }
 
-export async function createEntity(entity, database, schema) {
+export async function createEntity(entity, database, schema, options = {}) {
   return withDatabase(database, (db) => {
+    assertSchemaBinding(db, schema);
     const row = db.prepare(
       `INSERT INTO entities (id, name, kind, data, updated_at) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT (id) DO NOTHING RETURNING ${entityProjection}`,
-    ).get(...entityValues(entity, schema));
+    ).get(...entityValues(entity, schema, options));
     return rowToEntity(row, schema);
   });
 }
 
 export async function updateEntity(entityId, entity, database, schema) {
   return withDatabase(database, (db) => {
+    assertSchemaBinding(db, schema);
     const normalized = normalizeEntity({ ...entity, id: entityId }, schema);
     const values = entityValues(normalized, schema);
     const row = db.prepare(
@@ -168,39 +231,48 @@ export async function updateEntity(entityId, entity, database, schema) {
   });
 }
 
-export async function deleteEntity(entityId, database) {
-  return withDatabase(database, (db) => Boolean(db.prepare("DELETE FROM entities WHERE id = ? RETURNING id").get(entityId)));
+export async function deleteEntity(entityId, database, schema) {
+  return withDatabase(database, (db) => {
+    assertSchemaBinding(db, schema);
+    return Boolean(db.prepare("DELETE FROM entities WHERE id = ? RETURNING id").get(entityId));
+  });
 }
 
-export async function listEntities(database, schema) {
-  return withDatabase(database, (db) => db.prepare(
-    `SELECT ${entityProjection} FROM entities
-     ORDER BY json_extract(data, '$.category') IS NULL, json_extract(data, '$.category'), kind, id`,
-  ).all().map((row) => rowToEntity(row, schema)), { readOnly: true });
+export async function replaceEntities(entities, database, schema) {
+  return withDatabase(database, (db) => {
+    db.prepare("DELETE FROM entities").run();
+    const insert = db.prepare("INSERT INTO entities (id, name, kind, data, updated_at) VALUES (?, ?, ?, ?, ?)");
+    for (const entity of entities) insert.run(...entityValues(entity, schema, { preserveUpdatedAt: true }));
+    writeSchemaBinding(db, schema);
+    return entities.length;
+  });
 }
 
-export async function getEntity(entityId, database, schema) {
-  return withDatabase(database, (db) => rowToEntity(
-    db.prepare(`SELECT ${entityProjection} FROM entities WHERE id = ?`).get(entityId),
-    schema,
-  ), { readOnly: true });
+export async function listEntities(database, schema, options = {}) {
+  return withDatabase(database, (db) => {
+    if (!options.skipBinding) assertSchemaBinding(db, schema);
+    return db.prepare(`SELECT ${entityProjection} FROM entities ORDER BY kind, id`).all().map((row) => rowToEntity(row, schema));
+  }, { readOnly: true });
+}
+
+export async function getEntity(entityId, database, schema, options = {}) {
+  return withDatabase(database, (db) => {
+    if (!options.skipBinding) assertSchemaBinding(db, schema);
+    return rowToEntity(db.prepare(`SELECT ${entityProjection} FROM entities WHERE id = ?`).get(entityId), schema);
+  }, { readOnly: true });
 }
 
 export async function checkDb(database) {
   return withDatabase(database, (db) => {
     if (!tableExists(db, "entities")) {
-      return {
-        ok: false,
-        storage: "sqlite",
-        schema_version: null,
-        entity_count: 0,
-      };
+      return { ok: false, storage: "sqlite", schema_version: null, entity_count: 0, binding: null };
     }
     return {
       ok: true,
       storage: "sqlite",
       schema_version: 2,
       entity_count: db.prepare("SELECT count(*) AS count FROM entities").get().count,
+      binding: readSchemaBinding(db),
     };
   }, { readOnly: true });
 }

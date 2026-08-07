@@ -7,6 +7,11 @@ BURO_SERVER_HOST=${BURO_SERVER_HOST:-$(hostname -s)}
 BURO_API_PORT=${BURO_API_PORT:-8765}
 BURO_INSTANCE_ROOT=${BURO_INSTANCE_ROOT:-$(dirname "$BURO_ROOT")}
 
+if [ ! -d "$BURO_ROOT/.git" ]; then
+  printf 'Politia deployment requires the BURO source checkout: %s\n' "$BURO_ROOT" >&2
+  exit 1
+fi
+
 discover_workers() {
   command -v buro >/dev/null 2>&1 || return 0
   while read -r _ host _; do
@@ -119,7 +124,7 @@ if [ "$dry_run" -eq 0 ]; then
 fi
 
 log "install on central live runtime"
-central_config=$(printf '{"mode":"central","current_host":"%s","central_host":"%s","api_url":"http://127.0.0.1:%s","instance_root":"%s"}' \
+central_config=$(printf '{"mode":"central","preset":"politia","current_context":"%s","central_host":"%s","api_url":"http://127.0.0.1:%s","instance_root":"%s"}' \
   "$BURO_SERVER_HOST" "$BURO_SERVER_HOST" "$BURO_API_PORT" "$BURO_INSTANCE_ROOT")
 run mkdir -p "$HOME/.config/buro"
 run_shell "umask 077 && printf '%s\\n' '$central_config' > '$HOME/.config/buro/config.json'"
@@ -127,7 +132,7 @@ run sudo -n env "PATH=$sudo_node_path" npm install -g "$tarball" --prefix /usr/l
 
 if [ "$restart_api" -eq 1 ]; then
   log "back up central SQLite and restart live API"
-  run env BURO_MODE=local "BURO_CURRENT_HOST=$BURO_SERVER_HOST" buro backup
+  run env BURO_MODE=local BURO_PRESET=politia "BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST" buro backup
   run systemctl --user stop buro-api.service
   api_stopped=1
   run systemctl --user restart buro-api.service
@@ -163,7 +168,7 @@ if [ "$sync_workers" -eq 1 ]; then
     else
       remote_home="~"
     fi
-    client_config=$(printf '{"mode":"client","current_host":"%s","central_host":"%s","api_url":"http://%s:%s","instance_root":"%s/politia"}' \
+    client_config=$(printf '{"mode":"client","current_context":"%s","central_host":"%s","api_url":"http://%s:%s","instance_root":"%s/politia"}' \
       "$host" "$BURO_SERVER_HOST" "$BURO_SERVER_HOST" "$BURO_API_PORT" "$remote_home")
     if ! run ssh "$host" "mkdir -p ~/.config/buro && umask 077 && printf '%s\\n' '$client_config' > ~/.config/buro/config.json"; then
       failed_workers+=("$host")
@@ -174,9 +179,9 @@ if [ "$sync_workers" -eq 1 ]; then
 fi
 
 log "verify live packet format"
-run_shell "BURO_MODE=local BURO_CURRENT_HOST=$BURO_SERVER_HOST buro buro | grep -E 'BURO Entity:|Context:'"
-run_shell "BURO_MODE=client BURO_CURRENT_HOST=worker BURO_CENTRAL_HOST=$BURO_SERVER_HOST BURO_API_URL=http://127.0.0.1:$BURO_API_PORT buro buro | grep -E 'BURO Entity:|Context:'"
-run_shell "BURO_MODE=local BURO_CURRENT_HOST=$BURO_SERVER_HOST buro $BURO_SERVER_HOST | grep -E 'BURO Entity:|Context:'"
+run_shell "BURO_MODE=local BURO_PRESET=politia BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST buro buro | grep -E 'BURO Entity:|Context:'"
+run_shell "BURO_MODE=client BURO_CURRENT_CONTEXT=worker BURO_CENTRAL_HOST=$BURO_SERVER_HOST BURO_API_URL=http://127.0.0.1:$BURO_API_PORT buro buro | grep -E 'BURO Entity:|Context:'"
+run_shell "BURO_MODE=local BURO_PRESET=politia BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST buro $BURO_SERVER_HOST | grep -E 'BURO Entity:|Context:'"
 
 if [ "$sync_workers" -eq 1 ]; then
   for host in "${deployed_workers[@]}"; do

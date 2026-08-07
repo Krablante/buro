@@ -5,15 +5,14 @@ import { fileURLToPath } from "node:url";
 
 const DEFAULT_API_PORT = 8765;
 const DEFAULT_BACKUP_RETENTION = 20;
+const DEFAULT_PRESET = "starter";
 
-const DEFAULT_SCHEMA_PATH = fileURLToPath(new URL("../presets/politia.yaml", import.meta.url));
+export function contextKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
 
-export function canonicalHost(value) {
-  if (!value) {
-    return "unknown";
-  }
-  const host = String(value).trim().toLowerCase().split(".", 1)[0];
-  return host;
+function detectedContext(systemHostname = hostname()) {
+  return contextKey(String(systemHostname || "unknown").split(".", 1)[0]) || "unknown";
 }
 
 function configPath() {
@@ -24,49 +23,43 @@ function loadFileConfig() {
   const filePath = configPath();
   try {
     const parsed = JSON.parse(readFileSync(filePath, "utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("config must be a JSON object");
-    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("config must be a JSON object");
     return parsed;
   } catch (error) {
-    if (error?.code === "ENOENT") {
-      return {};
-    }
+    if (error?.code === "ENOENT") return {};
     throw new Error(`invalid BURO config ${filePath}: ${error.message}`);
   }
-}
-
-export function detectCurrentHost(systemHostname = hostname(), fileConfig = {}) {
-  return canonicalHost(process.env.BURO_CURRENT_HOST || fileConfig.current_host || systemHostname || "unknown");
 }
 
 function normalizeApiUrl(value) {
   return String(value).replace(/\/+$/, "");
 }
 
-function defaultApiUrl(mode, centralHost) {
-  const apiHost = mode === "client" ? centralHost : "127.0.0.1";
-  return `http://${apiHost}:${DEFAULT_API_PORT}`;
+function bundledPresetPath(preset) {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(preset)) throw new Error(`invalid BURO preset name: ${preset}`);
+  return fileURLToPath(new URL(`../presets/${preset}.yaml`, import.meta.url));
 }
 
 export function loadConfig() {
   const fileConfig = loadFileConfig();
-  const currentHost = detectCurrentHost(hostname(), fileConfig);
+  const currentContext = contextKey(
+    process.env.BURO_CURRENT_CONTEXT
+      || fileConfig.current_context
+      || detectedContext(),
+  );
   const mode = String(process.env.BURO_MODE || fileConfig.mode || (process.env.BURO_API_URL ? "client" : "local"))
     .trim()
     .toLowerCase();
-  if (!new Set(["local", "central", "client"]).has(mode)) {
-    throw new Error(`unsupported BURO mode: ${mode}`);
-  }
+  if (!new Set(["local", "central", "client"]).has(mode)) throw new Error(`unsupported BURO mode: ${mode}`);
 
-  const centralHost = canonicalHost(process.env.BURO_CENTRAL_HOST || fileConfig.central_host || currentHost);
+  const centralHost = contextKey(process.env.BURO_CENTRAL_HOST || fileConfig.central_host || detectedContext());
   const apiUrl = normalizeApiUrl(
-    process.env.BURO_API_URL || fileConfig.api_url || defaultApiUrl(mode, centralHost),
+    process.env.BURO_API_URL
+      || fileConfig.api_url
+      || `http://${mode === "client" ? centralHost : "127.0.0.1"}:${DEFAULT_API_PORT}`,
   );
   const instanceRoot = path.resolve(
-    process.env.BURO_ROOT
-      || fileConfig.instance_root
-      || path.join(homedir(), ".local", "share", "buro"),
+    process.env.BURO_ROOT || fileConfig.instance_root || path.join(homedir(), ".local", "share", "buro"),
   );
   const stateDir = path.resolve(
     process.env.BURO_STATE_DIR || fileConfig.state_dir || path.join(instanceRoot, "state", "buro"),
@@ -84,8 +77,9 @@ export function loadConfig() {
   if (!Number.isInteger(backupRetention) || backupRetention < 1) {
     throw new Error("BURO backup retention must be a positive integer");
   }
+  const preset = String(process.env.BURO_PRESET || fileConfig.preset || DEFAULT_PRESET).trim().toLowerCase();
   const schemaPath = path.resolve(
-    process.env.BURO_SCHEMA_PATH || fileConfig.schema_path || DEFAULT_SCHEMA_PATH,
+    process.env.BURO_SCHEMA_PATH || fileConfig.schema_path || bundledPresetPath(preset),
   );
   const draftPath = path.resolve(
     process.env.BURO_DRAFT_PATH || fileConfig.draft_path || path.join(instanceRoot, "BURO_DRAFT.yaml"),
@@ -93,7 +87,7 @@ export function loadConfig() {
 
   return {
     configPath: configPath(),
-    currentHost,
+    currentContext,
     centralHost,
     mode,
     apiUrl,
@@ -102,11 +96,12 @@ export function loadConfig() {
     databasePath,
     backupDir,
     backupRetention,
+    preset,
     schemaPath,
     draftPath,
   };
 }
 
-export function isCentralHost(config) {
+export function hasDirectStorage(config) {
   return config.mode !== "client";
 }
