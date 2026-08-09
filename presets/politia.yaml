@@ -1,5 +1,5 @@
 id: politia
-version: 4
+version: 5
 default_kind: project
 
 context:
@@ -74,17 +74,8 @@ kinds:
   service:
     label: service
     field_sets: [entity]
-  external:
-    label: external
-    field_sets: [entity]
   lab:
     label: lab
-    field_sets: [entity]
-  dotmd:
-    label: dotmd
-    field_sets: [entity]
-  skill:
-    label: skill
     field_sets: [entity]
   host:
     label: host
