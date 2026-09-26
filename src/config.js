@@ -70,10 +70,7 @@ export function loadConfig() {
   const backupDir = path.resolve(
     process.env.BURO_BACKUP_DIR || fileConfig.backup_dir || path.join(stateDir, "backups", "sqlite"),
   );
-  const backupRetention = Number.parseInt(
-    process.env.BURO_BACKUP_RETENTION || fileConfig.backup_retention || DEFAULT_BACKUP_RETENTION,
-    10,
-  );
+  const backupRetention = Number(process.env.BURO_BACKUP_RETENTION ?? fileConfig.backup_retention ?? DEFAULT_BACKUP_RETENTION);
   if (!Number.isInteger(backupRetention) || backupRetention < 1) {
     throw new Error("BURO backup retention must be a positive integer");
   }

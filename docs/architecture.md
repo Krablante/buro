@@ -1,21 +1,40 @@
 # Architecture
 
-BURO has one engine, one active preset, and one SQLite database.
+[English](architecture.md) · [Русский](architecture.ru.md) · [README](../README.md)
+
+BURO has one active preset and one SQLite database per local or central
+instance. The CLI handles commands and the local YAML draft. The resolver
+handles entity lookup, validation, rendering, revisions, and mutations. The
+HTTP API calls the resolver; client mode uses that API and holds no database
+copy. The preset defines vocabulary and presentation. SQLite stores the
+instance's records.
 
 ```text
-CLI reads ──────┐
-CLI draft push ─┼─ resolver ─ schema validation ─ entities table
-HTTP API ───────┘          └─ write transaction └─ online backup
-                     ↑
-               active preset
+CLI / draft ─┐
+             ├─ resolver ─ schema + packets ─ SQLite
+HTTP API ────┘                         └────── backups before writes
+                                  ↑
+                            active preset
 ```
 
-The CLI owns the local draft and review UX. The resolver owns storage operations, validation, rendering, revision checks, and backups. The HTTP API is transport over those same operations. The preset owns vocabulary and presentation: kinds, finite fields, context relationships, display sections, and concise guidance. SQLite owns instance facts.
+An entity is one row: `id`, `name`, `kind`, `updated_at`, and a validated JSON
+object for preset fields. Identity and kind remain directly queryable without
+creating a database table for every vocabulary. The database binding includes
+the preset id, version, and a SHA-256 hash of its data contract. Human guide
+wording is outside that hash. A version or model change requires explicit
+adoption through `buro init` or a whole-registry import.
 
-Every entity occupies one row. Core identity columns stay directly queryable; preset-defined data is one validated JSON object. This avoids EAV joins and avoids creating physical tables from preset vocabulary.
+Every mutation takes a SQLite `BEGIN IMMEDIATE` write lock, checks revisions
+and declared references, makes a consistent pre-write backup, then changes
+the row. The process also serializes its own mutations; SQLite coordinates
+other processes. Failed checks leave the draft for correction. Import checks
+the complete new entity set before replacing all rows in one transaction.
 
-The database is bound to the active preset id, version, and SHA-256 model hash. The hash covers data shape and validation semantics but excludes human wording such as field and section guides. Editing guidance therefore needs no data migration; changing the preset version or semantic model requires explicit `buro init`, which validates every stored entity before adoption. Incompatible model changes use full export/import.
-
-Local mode opens SQLite directly. Central mode opens the same file and adds HTTP. Client mode fetches schema and entities from the central API and never needs a local preset or database copy.
-
-Every mutation is serialized in-process and runs under one SQLite `BEGIN IMMEDIATE` transaction. Reference checks, context-alias uniqueness, revision checks, backup, and mutation therefore observe one write-locked state. A stale draft cannot overwrite or delete a newer entity.
+The hot read paths are narrower than a registry export. A direct entity
+lookup reads one row plus context records for aliases; `buro list` reads only
+identity columns; `buro current` reads the context and member summaries.
+Member selection still scans stored JSON fields because the member field is
+chosen by the preset. Full entity enumeration is reserved for export and
+explicit `/entities` reads. Backups copy the database on each mutation, so
+write cost grows with database size; this favors reviewed, relatively
+infrequent fact changes over high-rate event storage.

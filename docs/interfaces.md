@@ -1,39 +1,46 @@
 # Interfaces
 
-The CLI has one generic read model:
+[English](interfaces.md) · [Русский](interfaces.ru.md) · [README](../README.md)
 
-```text
-buro <id>
-buro current
-buro list [kind]
-buro schema [kind]
-buro --version
-```
+The everyday CLI reads are `buro <id>`, `buro current`, `buro list [kind]`,
+and `buro schema [kind]`. An exact id wins over an alias. `current` resolves
+the configured context and lists records whose member reference points to it;
+it is a scoped view, not the whole registry. `buro --version` reports the
+installed package version. [Draft commands](draft-workflow.md) handle ordinary
+writes.
 
-`buro <id>` resolves an exact entity id or a context alias declared by the active preset. `buro current` resolves configured `current_context`, renders that context, and lists entities whose configured member reference points to it.
+## HTTP for clients
 
-Administrative portability is explicit:
+Run `buro serve --host 127.0.0.1 --port 8765` on a central instance. The
+server uses the same resolver and database as the local CLI.
 
-```text
-buro export <file>
-buro import <file> [--adopt]
-```
+| Route | Meaning |
+| --- | --- |
+| `GET /health` | Database and active preset status |
+| `GET /schema` | Active preset for client-side draft validation |
+| `GET /entities` | All full entity JSON (export or administration) |
+| `GET /entities?summary=1&kind=host&current_context=worker` | Compact list and current-context id; `kind` is optional |
+| `GET /current?current_context=worker` | Context id/root, packet, and compact member list |
+| `GET /entities/:id` | One entity, resolving context aliases |
+| `POST /entities/:id` | Create an entity |
+| `PUT /entities/:id` | Update an entity with `If-Match` revision |
+| `DELETE /entities/:id` | Delete an entity with `If-Match` revision |
+| `GET /packet/entity/:id?current_context=worker` | Structured packet with guides |
 
-Export writes a mode-0600 deterministic YAML manifest containing preset identity, model hash, entities, and revisions. Import validates the complete manifest and every reference before opening a write transaction, backs up a non-empty target, replaces all entities atomically, and binds the database to the active preset. `--adopt` is required when the manifest came from a different preset version or identity.
+The client CLI renders packets locally from the structured response. Draft-only
+guidance does not appear in packets. An update or delete sends the revision
+from the starting entity in `If-Match`; stale revisions are rejected. Requests
+have a 1 MiB body limit. Client requests time out after three seconds without
+automatic retries. The built-in server has neither authentication nor TLS:
+bind to loopback or limit access to a trusted private network.
 
-The HTTP surface mirrors ordinary resolver operations:
+## Whole-registry portability
 
-```text
-GET    /health
-GET    /schema
-GET    /entities
-GET    /entities/:id
-POST   /entities/:id
-PUT    /entities/:id
-DELETE /entities/:id
-GET    /packet/entity/:id?current_context=<id>
-```
-
-`GET /packet/entity/:id` returns structured packet JSON; guided sections and fields carry their plain-language `guide`, and the CLI renders those alongside the facts. Draft-only guidance is not part of packets. Client update/delete sends the revision in `If-Match`. Requests have a one-megabyte body limit. Client requests have a three-second timeout and no automatic retries.
-
-The built-in server provides neither authentication nor TLS. It binds to loopback by default. Expose it only on a trusted private network or behind an external access boundary.
+`buro export <file>` writes a deterministic YAML manifest, mode `0600`, with
+the preset identity, model hash, records, and revisions. `buro import <file>
+[--adopt]` validates the full manifest and every declared reference, takes a
+backup of a nonempty target, and replaces the registry in one transaction.
+`--adopt` is needed when the manifest's preset identity or version differs.
+These commands require direct storage. Exports contain private instance
+facts; keep them in private state. Import is the deliberate path for recovery
+and model migration, not ordinary entity editing.

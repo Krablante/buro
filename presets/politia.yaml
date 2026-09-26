@@ -94,7 +94,7 @@ fields:
   path:
     type: string
     section: location
-    guide: verified absolute path to the project, service, or document
+    guide: verified absolute path to the entity
   repo:
     type: string
     section: repository

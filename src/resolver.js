@@ -10,6 +10,9 @@ import {
   deleteEntity as deleteDbEntity,
   getEntity,
   listEntities,
+  listEntityIds,
+  listEntitySummaries,
+  listMemberSummaries,
   openDatabase,
   replaceEntities,
   schemaSql,
@@ -80,22 +83,22 @@ async function validateReferences(entity, config) {
 }
 
 async function validateLookupIdentity(entity, config) {
-  const entities = await listEntities(config.database, config.schema);
+  const contexts = await listEntities(config.database, config.schema, { kind: config.schema.context.kind });
   if (entity.kind === config.schema.context.kind) {
     const candidateKeys = new Set(contextKeys(entity, config.schema));
-    for (const existing of entities) {
-      if (existing.id === entity.id) continue;
-      if (candidateKeys.has(contextKey(existing.id))) {
-        throw conflict(`context name or alias is already used as entity id ${existing.id}`);
+    for (const id of await listEntityIds(config.database, config.schema)) {
+      if (id !== entity.id && candidateKeys.has(contextKey(id))) {
+        throw conflict(`context name or alias is already used as entity id ${id}`);
       }
-      if (existing.kind !== config.schema.context.kind) continue;
+    }
+    for (const existing of contexts) {
+      if (existing.id === entity.id) continue;
       const duplicate = contextKeys(existing, config.schema).find((key) => candidateKeys.has(key));
       if (duplicate) throw conflict(`context name or alias is already used by ${existing.id}: ${duplicate}`);
     }
     return;
   }
-  for (const existing of entities) {
-    if (existing.kind !== config.schema.context.kind) continue;
+  for (const existing of contexts) {
     if (contextKeys(existing, config.schema).includes(contextKey(entity.id))) {
       throw conflict(`entity id conflicts with context name or alias ${existing.id}: ${entity.id}`);
     }
@@ -114,9 +117,8 @@ async function validateNotReferenced(entityId, config) {
 }
 
 async function resolveContext(value, config) {
-  const matches = (await listEntities(config.database, config.schema)).filter((entity) => (
-    entity.kind === config.schema.context.kind && contextMatches(entity, value, config.schema)
-  ));
+  const matches = (await listEntities(config.database, config.schema, { kind: config.schema.context.kind }))
+    .filter((entity) => contextMatches(entity, value, config.schema));
   if (matches.length > 1) throw new Error(`ambiguous current context ${value}: ${matches.map((entity) => entity.id).join(", ")}`);
   return matches[0] || null;
 }
@@ -200,6 +202,16 @@ export async function resolveEntities(options = {}) {
   return listEntities(config.database, config.schema);
 }
 
+export async function resolveEntitySummaries(kind, options = {}) {
+  const config = resolverConfig(options);
+  if (kind && !config.schema.kinds[kind]) throw new Error(`unsupported entity kind: ${kind}`);
+  const context = await resolveContext(config.currentContext, config);
+  return {
+    entities: await listEntitySummaries(config.database, config.schema, kind),
+    current_context: context?.id || null,
+  };
+}
+
 export async function resolveEntity(id, options = {}) {
   const config = resolverConfig(options);
   const entityId = requireId(id);
@@ -217,6 +229,18 @@ export async function resolveEntityPacket(id, options = {}) {
       : null;
   const current = await resolveContext(config.currentContext, config);
   return entityPacket(entity, config.schema, current, context);
+}
+
+export async function resolveCurrentContext(options = {}) {
+  const config = resolverConfig(options);
+  const context = await resolveContext(config.currentContext, config);
+  if (!context) return null;
+  const rootField = config.schema.context.root_field;
+  return {
+    context: { id: context.id, ...(rootField && context[rootField] !== undefined ? { [rootField]: context[rootField] } : {}) },
+    packet: entityPacket(context, config.schema, context, context),
+    members: await listMemberSummaries(context.id, config.database, config.schema),
+  };
 }
 
 function assertMatchingId(id, payload) {

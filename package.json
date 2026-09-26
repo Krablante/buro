@@ -1,7 +1,7 @@
 {
   "name": "buro",
-  "version": "1.0.0",
-  "description": "Typed SQLite context registry for AI agents — no RAG, no AGENTS.md, one schema, one reviewed draft.",
+  "version": "1.1.0",
+  "description": "Typed context registry for people and agents, with SQLite storage and reviewed YAML drafts.",
   "license": "MIT",
   "keywords": [
     "ai-agents",

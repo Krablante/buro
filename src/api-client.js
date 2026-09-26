@@ -58,6 +58,9 @@ export function createApiClient(baseUrl) {
   return {
     schema: async () => (await getJson(baseUrl, "/schema")).schema,
     entities: async () => (await getJson(baseUrl, "/entities")).entities,
+    entitySummaries: (kind, currentContext) => getJson(baseUrl,
+      `/entities?summary=1${kind ? `&kind=${encodeURIComponent(kind)}` : ""}${currentContext ? `&current_context=${encodeURIComponent(currentContext)}` : ""}`),
+    current: (currentContext) => getJson(baseUrl, `/current${currentContextQuery(currentContext)}`),
     entity: (id) => getJson(baseUrl, `/entities/${encodeURIComponent(id)}`),
     createEntity: (id, entity = {}) =>
       requestJson(baseUrl, `/entities/${encodeURIComponent(id)}`, { method: "POST", body: entity }),

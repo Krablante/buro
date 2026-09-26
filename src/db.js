@@ -1,4 +1,5 @@
 import { mkdir, readdir, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -35,6 +36,10 @@ CREATE INDEX IF NOT EXISTS entities_kind_idx ON entities (kind);
 
 function now() {
   return new Date().toISOString();
+}
+
+function revision() {
+  return `${now()}-${randomUUID()}`;
 }
 
 function hasDatabase(value) {
@@ -178,7 +183,7 @@ function entityValues(entity, schema, options = {}) {
     normalized.name,
     normalized.kind,
     JSON.stringify(entityData(normalized, schema)),
-    options.preserveUpdatedAt && normalized.updated_at ? normalized.updated_at : now(),
+    options.preserveUpdatedAt && normalized.updated_at ? normalized.updated_at : revision(),
   ];
 }
 
@@ -251,7 +256,37 @@ export async function replaceEntities(entities, database, schema) {
 export async function listEntities(database, schema, options = {}) {
   return withDatabase(database, (db) => {
     if (!options.skipBinding) assertSchemaBinding(db, schema);
-    return db.prepare(`SELECT ${entityProjection} FROM entities ORDER BY kind, id`).all().map((row) => rowToEntity(row, schema));
+    const query = options.kind
+      ? `SELECT ${entityProjection} FROM entities WHERE kind = ? ORDER BY id`
+      : `SELECT ${entityProjection} FROM entities ORDER BY kind, id`;
+    return db.prepare(query).all(...(options.kind ? [options.kind] : [])).map((row) => rowToEntity(row, schema));
+  }, { readOnly: true });
+}
+
+export async function listEntityIds(database, schema) {
+  return withDatabase(database, (db) => {
+    assertSchemaBinding(db, schema);
+    return db.prepare("SELECT id FROM entities").all().map((row) => row.id);
+  }, { readOnly: true });
+}
+
+export async function listEntitySummaries(database, schema, kind) {
+  return withDatabase(database, (db) => {
+    assertSchemaBinding(db, schema);
+    const query = kind
+      ? "SELECT id, name, kind FROM entities WHERE kind = ? ORDER BY kind, id"
+      : "SELECT id, name, kind FROM entities ORDER BY kind, id";
+    return db.prepare(query).all(...(kind ? [kind] : []));
+  }, { readOnly: true });
+}
+
+export async function listMemberSummaries(contextId, database, schema) {
+  return withDatabase(database, (db) => {
+    assertSchemaBinding(db, schema);
+    const memberPath = `$.${JSON.stringify(schema.context.member_field)}`;
+    return db.prepare(
+      "SELECT id, name, kind FROM entities WHERE kind <> ? AND json_extract(data, ?) = ? ORDER BY kind, id",
+    ).all(schema.context.kind, memberPath, contextId);
   }, { readOnly: true });
 }
 

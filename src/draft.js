@@ -47,9 +47,8 @@ async function writeDraftFile(filePath, contents) {
 function scalarToYaml(value) {
   if (value === null || value === undefined) return "";
   const text = String(value);
-  if (text === "") return '""';
-  if (/\n|^\s|\s$|[#[\]{},]|:\s|^[-?]|^(null|true|false|~)$/i.test(text)) return JSON.stringify(text);
-  return text;
+  if (text.includes("\n")) return JSON.stringify(text);
+  return yaml.dump(text, { lineWidth: -1, quotingType: '"' }).trimEnd();
 }
 
 function valuePresent(value) {
@@ -61,9 +60,10 @@ function valuePresent(value) {
 
 function nestedToYaml(name, value, field, indent = "") {
   if (field.type === "text" && String(value).includes("\n")) {
-    return [`${indent}${name}: |`, ...String(value).split("\n").map((line) => `${indent}  ${line}`)];
+    const [indicator, ...lines] = yaml.dump(value, { lineWidth: -1 }).trimEnd().split("\n");
+    return [`${indent}${name}: ${indicator}`, ...lines.map((line) => `${indent}  ${line}`)];
   }
-  return [`${indent}${name}: ${scalarToYaml(value)}`];
+  return [`${indent}${name}: ${typeof value === "string" ? scalarToYaml(value) : String(value)}`];
 }
 
 function recordToYaml(name, value, field) {
@@ -78,26 +78,19 @@ function recordToYaml(name, value, field) {
 }
 
 function recordListToYaml(name, values, field) {
-  const lines = [`${name}:`];
-  for (const value of values) {
-    const entries = Object.entries(field.fields).filter(([nestedName]) => valuePresent(value?.[nestedName]));
-    if (!entries.length) continue;
-    const [[firstName], ...rest] = entries;
-    lines.push(`  - ${firstName}: ${scalarToYaml(value[firstName])}`);
-    for (const [nestedName, nestedField] of rest) lines.push(...nestedToYaml(nestedName, value[nestedName], nestedField, "    "));
-  }
-  return lines;
+  const lines = yaml.dump(values, { noRefs: true, lineWidth: -1, quotingType: '"' }).trimEnd().split("\n");
+  return [`${name}:`, ...lines.map((line) => `  ${line}`)];
 }
 
 function fieldToYaml(name, value, field) {
   if (field.type === "record") return recordToYaml(name, value, field);
-  if (field.type === "record-list") return recordListToYaml(name, value, field);
+  if (field.type === "record-list") return recordListToYaml(name, value);
   if (field.type === "string-list") return [`${name}:`, ...value.map((entry) => `  - ${scalarToYaml(entry)}`)];
   if (field.type === "text") {
     const text = String(value);
-    return text.includes("\n") ? [`${name}: |`, ...text.split("\n").map((line) => `  ${line}`)] : [`${name}: ${scalarToYaml(text)}`];
+    return text.includes("\n") ? nestedToYaml(name, text, field) : [`${name}: ${scalarToYaml(text)}`];
   }
-  return [`${name}: ${field.type === "boolean" ? String(value) : scalarToYaml(value)}`];
+  return [`${name}: ${typeof value === "string" ? scalarToYaml(value) : String(value)}`];
 }
 
 function optionalFieldToYaml(name, field) {
@@ -302,23 +295,41 @@ export function lineDiff(fromText, toText, { fromLabel = "BURO current", toLabel
   const from = linesOf(fromText);
   const to = linesOf(toText);
   if (from.join("\n") === to.join("\n")) return "No draft changes.\n";
-  const table = Array.from({ length: from.length + 1 }, () => Array(to.length + 1).fill(0));
-  for (let i = from.length - 1; i >= 0; i -= 1) {
-    for (let j = to.length - 1; j >= 0; j -= 1) {
-      table[i][j] = from[i] === to[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
-    }
+  let prefix = 0;
+  while (prefix < from.length && prefix < to.length && from[prefix] === to[prefix]) prefix += 1;
+  let fromEnd = from.length;
+  let toEnd = to.length;
+  while (fromEnd > prefix && toEnd > prefix && from[fromEnd - 1] === to[toEnd - 1]) {
+    fromEnd -= 1;
+    toEnd -= 1;
   }
+  const removed = from.slice(prefix, fromEnd);
+  const added = to.slice(prefix, toEnd);
   const output = [`--- ${fromLabel}`, `+++ ${toLabel}`];
-  let i = 0;
-  let j = 0;
-  while (i < from.length || j < to.length) {
-    if (i < from.length && j < to.length && from[i] === to[j]) {
-      output.push(`  ${from[i]}`); i += 1; j += 1;
-    } else if (j < to.length && (i === from.length || table[i][j + 1] >= table[i + 1][j])) {
-      output.push(`+ ${to[j]}`); j += 1;
-    } else {
-      output.push(`- ${from[i]}`); i += 1;
+  for (let index = 0; index < prefix; index += 1) output.push(`  ${from[index]}`);
+  // A largely rewritten draft should still be reviewable without allocating a quadratic table.
+  if (removed.length * added.length > 2_000_000) {
+    for (const line of removed) output.push(`- ${line}`);
+    for (const line of added) output.push(`+ ${line}`);
+  } else {
+    const table = Array.from({ length: removed.length + 1 }, () => Array(added.length + 1).fill(0));
+    for (let i = removed.length - 1; i >= 0; i -= 1) {
+      for (let j = added.length - 1; j >= 0; j -= 1) {
+        table[i][j] = removed[i] === added[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+      }
+    }
+    let i = 0;
+    let j = 0;
+    while (i < removed.length || j < added.length) {
+      if (i < removed.length && j < added.length && removed[i] === added[j]) {
+        output.push(`  ${removed[i]}`); i += 1; j += 1;
+      } else if (j < added.length && (i === removed.length || table[i][j + 1] >= table[i + 1][j])) {
+        output.push(`+ ${added[j]}`); j += 1;
+      } else {
+        output.push(`- ${removed[i]}`); i += 1;
+      }
     }
   }
+  for (let index = fromEnd; index < from.length; index += 1) output.push(`  ${from[index]}`);
   return `${output.join("\n")}\n`;
 }

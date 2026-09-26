@@ -1,49 +1,96 @@
-# Operations
+# Configuration and operations
 
-Normal operation is reading entities and reviewing drafts. Administrative commands are:
+[English](operations.md) · [Русский](operations.ru.md) · [README](../README.md)
+
+Local mode opens SQLite directly. Central mode opens the same database and
+adds `buro serve` for clients. Client mode calls the central API and holds no
+local SQLite file or preset copy. All three use the same entity model and
+reviewed [draft workflow](draft-workflow.md).
+
+The default local layout keeps mutable state outside the source checkout:
 
 ```text
-buro init
-buro backup
-buro export <file>
-buro import <file> [--adopt]
-buro serve --host 127.0.0.1 --port 8765
+~/.config/buro/config.json
+~/.local/share/buro/
+├── BURO_DRAFT.yaml              # only while editing
+└── state/buro/
+    ├── buro.sqlite3
+    └── backups/sqlite/
 ```
 
-`buro init` creates the registry or explicitly adopts the active preset after validating every stored entity. It backs up an existing database before validation. Ordinary reads refuse a preset id, version, or hash mismatch.
+`starter`, `local`, and the short system hostname are the default preset,
+mode, and current context. A client configuration can be as small as:
 
-`buro backup` uses SQLite's online backup API and applies retention in-process. Every successful entity mutation also creates a pre-mutation snapshot. BURO has no database daemon, backup timer, alternate storage model, or migration language.
+```json
+{
+  "mode": "client",
+  "current_context": "worker-a",
+  "central_host": "registry",
+  "api_url": "http://registry:8765"
+}
+```
 
-`buro export` and `buro import` are the full-registry portability path. Keep exports in private state: they contain instance facts. For an incompatible schema change, export under the old preset, transform the entities, then import under the new preset with explicit `--adopt`. Import validates everything before changing SQLite and replaces the registry in one transaction.
+`BURO_CONFIG` selects another config file. Environment settings override its
+JSON keys. An explicit schema path takes precedence over the bundled preset.
 
-`init`, `backup`, `export`, `import`, and `serve` require local or central mode. Client mode has no local storage.
+| JSON key | Environment setting |
+| --- | --- |
+| `mode` | `BURO_MODE` |
+| `preset` | `BURO_PRESET` |
+| `current_context` | `BURO_CURRENT_CONTEXT` |
+| `central_host` | `BURO_CENTRAL_HOST` |
+| `api_url` | `BURO_API_URL` |
+| `instance_root` | `BURO_ROOT` |
+| `state_dir` | `BURO_STATE_DIR` |
+| `database_path` | `BURO_DATABASE_PATH` |
+| `backup_dir` | `BURO_BACKUP_DIR` |
+| `backup_retention` | `BURO_BACKUP_RETENTION` |
+| `draft_path` | `BURO_DRAFT_PATH` |
+| `schema_path` | `BURO_SCHEMA_PATH` |
 
-`buro serve` has no built-in authentication or TLS. Bind it to `127.0.0.1` unless a trusted private network or external proxy provides the access boundary.
+Backups retain the newest 20 snapshots by default. `buro backup` uses
+SQLite's online backup API; each successful mutation takes a pre-write copy
+under the SQLite write lock. Frequent writes to a large database therefore
+cost real I/O and storage. Set retention for your available disk space and
+test recovery by importing a [whole-registry export](interfaces.md) or
+restoring a snapshot into a separate instance. `buro init` creates the
+database; on an existing database it backs up, checks every entity and
+explicitly adopts a compatible new preset. Normal reads refuse a mismatched
+binding.
+
+`buro init`, `buro backup`, `buro export`, `buro import`, and `buro serve`
+require local or central mode. The built-in HTTP server has no authentication
+or TLS. Bind to loopback unless a trusted private network or external proxy
+provides the access boundary. Never copy or synchronize the central SQLite
+file to workers.
 
 ## Politia maintainer deployment
 
-The repository's `npm run deploy:politia` / `npm run deploy:live` script is the real Politia operator deployment, not a generic installer. It packs once, writes explicit `politia` central/client configs, installs the package centrally, stops the API, runs `buro init` to take an online backup and validate/adopt the active compatible preset, restarts the API, installs the same package on reachable workers, verifies the active preset and guided entity output on every surface, and removes package artifacts. Worker topology comes from `buro list host`; `BURO_WORKER_HOSTS` overrides discovery.
+The repository's `npm run deploy:politia` (alias `deploy:live`) is an operator
+script for Politia on Linux, not a general installer. It packs the checkout
+once, installs it on the central host, validates/adopts the active `politia`
+preset, restarts `buro-api.service`, and installs the same package on reachable
+workers. Workers come from `buro list host`; `BURO_WORKER_HOSTS` overrides
+discovery. An unreachable worker is reported and left untouched; a reachable
+worker failure fails the deployment.
 
 ```sh
 npm run deploy:politia -- --dry-run
 npm run deploy:politia
 ```
 
-An offline worker is reported and left untouched. Copy, install, cleanup, or configuration failure on a reachable worker fails the deployment.
+The script checks its terminal demos before packing and verifies the installed
+CLI and API afterward. It needs the operator's configured SSH/sudo access.
+Source edits alone do not update the live CLI, API, or remote clients. Review
+`scripts/deploy-live.sh` and the configured service before deploying to an
+installation other than Politia.
 
 ## README terminal demos
 
-The English and Russian README GIFs are reproducible release artifacts, not hand-written terminal mockups. The generator creates an isolated temporary `starter` instance, runs the source CLI through `init`, draft creation, diff, push, `current`, and `list`, then renders only that captured output. It never opens the configured operator database or draft.
-
-```sh
-npm run demos
-npm run demos:check
-```
-
-The first command regenerates `assets/demo-en.gif` and `assets/demo-ru.gif`. The second performs the same real CLI flow in temporary state and fails if either committed GIF differs. The official Politia deployment runs that check before `npm pack`, so it cannot ship stale demos while generic package consumers do not inherit a media-build requirement.
-
-Rendering requires `ffmpeg` with the `ass`, `palettegen`, and `paletteuse` filters plus DejaVu Sans and DejaVu Sans Mono. The generator discovers the usual Linux font directories; set `BURO_DEMO_FONTS_DIR` for another location. No npm build dependency or background service is added.
-
-## Verification
-
-Verification uses real source, SQLite, export/import, API, draft, package, service, and worker surfaces. This repository deliberately keeps no unit, integration, or smoke-test files; the operator workflow validates the actual interfaces that users and agents run.
+`npm run demos` regenerates the English and Russian GIFs in `assets/` from
+real CLI commands against isolated temporary `starter` state. `npm run
+demos:check` checks the committed artifacts against the same flow; the
+operator deploy runs it before packing. The renderer needs `ffmpeg` with
+`ass`, `palettegen`, and `paletteuse`, plus DejaVu Sans and Mono. Use
+`BURO_DEMO_FONTS_DIR` to select another font directory. No operator registry
+or draft is used by the demo generator.

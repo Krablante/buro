@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { createApiClient } from "./api-client.js";
 import { serve } from "./api.js";
-import { contextKey, hasDirectStorage, loadConfig } from "./config.js";
+import { hasDirectStorage, loadConfig } from "./config.js";
 import {
   clearDraft,
   entityToDraftYaml,
@@ -35,7 +35,9 @@ import { exportRegistry, importRegistry } from "./registry.js";
 import {
   createEntityRecord,
   deleteEntityRecord,
+  resolveCurrentContext,
   resolveEntities,
+  resolveEntitySummaries,
   resolveEntity,
   resolveEntityPacket,
   updateEntityRecord,
@@ -93,7 +95,8 @@ function dataClient(config, localSchema) {
     const options = localOptions(config, localSchema);
     return {
       schema: async () => localSchema,
-      entities: () => resolveEntities(options),
+      entitySummaries: (kind) => resolveEntitySummaries(kind, options),
+      current: () => resolveCurrentContext(options),
       entity: (id) => resolveEntity(id, options),
       createEntity: (id, entity) => createEntityRecord(id, entity, options),
       updateEntity: (id, entity, revision) => updateEntityRecord(id, entity, { ...options, expectedUpdatedAt: revision }),
@@ -107,7 +110,15 @@ function dataClient(config, localSchema) {
   const api = createApiClient(config.apiUrl);
   return {
     schema: async () => normalizeSchema(await api.schema(), `API ${config.apiUrl}/schema`),
-    entities: () => api.entities(),
+    entitySummaries: (kind) => api.entitySummaries(kind, config.currentContext),
+    current: async () => {
+      try {
+        return await api.current(config.currentContext);
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("BURO API 404: current context not found:")) return null;
+        throw error;
+      }
+    },
     entity: (id) => api.entity(id),
     createEntity: (id, entity) => api.createEntity(id, entity),
     updateEntity: (id, entity, revision) => api.updateEntity(id, entity, revision),
@@ -125,33 +136,18 @@ async function getEntityOrNull(client, id) {
   }
 }
 
-function contextMatches(entity, value, schema) {
-  const candidate = contextKey(value);
-  return [entity.id, ...(entity[schema.context.alias_field] || [])].map(contextKey).includes(candidate);
-}
-
-function findCurrentContext(entities, value, schema) {
-  const matches = entities.filter((entity) => entity.kind === schema.context.kind && contextMatches(entity, value, schema));
-  if (matches.length > 1) throw new Error(`ambiguous current context ${value}: ${matches.map((entity) => entity.id).join(", ")}`);
-  return matches[0] || null;
-}
-
 async function printCurrentContext(client, config, schema) {
-  const entities = await client.entities();
-  const context = findCurrentContext(entities, config.currentContext, schema);
+  const current = await client.current();
+  const context = current?.context;
   if (!context) {
     throw new Error(`${schema.context.kind} not found for current context ${config.currentContext}; create it with \`buro draft new ${config.currentContext} ${schema.context.kind}\``);
   }
-  const packetText = await client.packetText(context.id);
-  const members = entities.filter((entity) => (
-    entity.kind !== schema.context.kind && entity[schema.context.member_field] === context.id
-  ));
   process.stdout.write(renderCurrentContext({
     currentContext: context.id,
     home: process.env.HOME || homedir(),
     contextRoot: schema.context.root_field ? context[schema.context.root_field] : undefined,
-    packetText,
-    members,
+    packetText: renderPacket(current.packet),
+    members: current.members,
   }));
 }
 
@@ -355,10 +351,8 @@ export async function runCli(argv = process.argv.slice(2)) {
   if (command === "list") {
     const kind = args[1];
     if (kind && !schema.kinds[kind]) throw new Error(`unsupported entity kind: ${kind}`);
-    const all = await client.entities();
-    const entities = all.filter((entity) => !kind || entity.kind === kind);
-    const current = findCurrentContext(all, config.currentContext, schema)?.id;
-    for (const entity of entities) console.log(renderEntityListLine(entity, current));
+    const result = await client.entitySummaries(kind);
+    for (const entity of result.entities) console.log(renderEntityListLine(entity, result.current_context));
     return 0;
   }
   if (command === "current") {

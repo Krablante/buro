@@ -5,7 +5,9 @@ import { initDb, openDatabase } from "./db.js";
 import {
   createEntityRecord,
   deleteEntityRecord,
+  resolveCurrentContext,
   resolveEntities,
+  resolveEntitySummaries,
   resolveEntity,
   resolveEntityPacket,
   resolveHealth,
@@ -97,12 +99,30 @@ export function createApiServer(options = {}) {
         return;
       }
 
+      if (path === "/current") {
+        if (request.method !== "GET") {
+          methodNotAllowed(response);
+          return;
+        }
+        const current = await resolveCurrentContext({ ...config, currentContext });
+        if (!current) {
+          notFound(response, `current context not found: ${currentContext}`);
+          return;
+        }
+        sendJson(response, 200, current);
+        return;
+      }
+
       if (path === "/entities") {
         if (request.method !== "GET") {
           methodNotAllowed(response);
           return;
         }
-        sendJson(response, 200, { entities: await resolveEntities(config) });
+        if (url.searchParams.get("summary") === "1") {
+          sendJson(response, 200, await resolveEntitySummaries(url.searchParams.get("kind"), { ...config, currentContext }));
+        } else {
+          sendJson(response, 200, { entities: await resolveEntities(config) });
+        }
         return;
       }
 

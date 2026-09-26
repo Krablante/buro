@@ -1,20 +1,33 @@
-# BURO Draft Workflow
+# Editing with a draft
 
-Draft is the supported ordinary mutation path. It gives a human or agent one local YAML file to edit and one visible diff before SQLite changes.
+[English](draft-workflow.md) · [Русский](draft-workflow.ru.md) · [README](../README.md)
+
+One local YAML draft is the ordinary write path, whether the CLI talks to
+SQLite directly or to a central API. To create, edit, or delete a record:
 
 ```text
-buro draft pull <id>
-buro draft new <id> [kind]
-buro draft delete <id>
+buro draft new my-service service    # or: pull my-service / delete my-service
+# Open the file path printed by the command and edit its YAML.
 buro draft diff
 buro draft push
-buro draft clear
 ```
 
-Only one draft may exist at a time. Pull/new/delete refuses to overwrite it; push it or clear it deliberately. The draft is generated from the active preset. Existing facts are active YAML, required missing fields are active and labelled, and optional missing fields stay commented with their guides and complete record shape. Every configured section explains what belongs there; optional `draft_guide` text adds filling advice that is never rendered as entity data.
+`new` uses the preset's default kind when the kind is omitted. The draft
+contains active existing facts, clearly marked missing required fields, and
+commented optional fields with their complete record shape. Section and field
+guides explain where facts belong. Leave unknown facts empty. Only one draft
+can exist at a time; `buro draft clear` deliberately discards it.
 
-Internal `__buro` metadata records whether the operation creates, updates, or deletes and captures the base entity revision. The stable entity id cannot be renamed inside an update draft. Diff and push reject a stale revision, so another host or operator cannot be overwritten after review.
+Internal `__buro` metadata records create, update, or delete and the starting
+revision. The id stays fixed in an update. `diff` compares the edited draft
+with the current record and rejects a stale revision; `push` validates the
+record, checks references and uniqueness, takes a pre-write SQLite snapshot,
+applies the change, and clears the draft. Failed pushes leave it in place.
+If someone else changed the record, pull a fresh draft and review the edit
+again. Even a large draft can be reviewed without allocating a quadratic
+diff table; a mostly rewritten region may appear as removed and added lines.
 
-In local mode push goes through the resolver into SQLite. In client mode the worker fetches the central schema, validates the same YAML shape, and sends entity JSON plus the revision to the API. The server stores no second draft. Successful create, update, and delete operations make a consistent pre-mutation backup under the same SQLite write lock. Failed pushes leave the local draft in place.
-
-The draft path defaults to `<instance_root>/BURO_DRAFT.yaml` and can be overridden with `draft_path` or `BURO_DRAFT_PATH`.
+The default draft path is `<instance_root>/BURO_DRAFT.yaml`. Set `draft_path`
+or `BURO_DRAFT_PATH` to change it. A client keeps its draft locally and sends
+validated entity JSON with its revision to the server; the server stores no
+second draft. See [interfaces](interfaces.md) for API details.
