@@ -4,7 +4,9 @@
 
 <p align="center">A typed registry of projects, services, hosts, and the rules for working with them.<br>One command gives a person or an agent the same recorded facts, on any machine with Node.js.</p>
 
-<p align="center"><a href="README.md"><strong>English</strong></a> · <a href="README.ru.md">Русский</a></p>
+<p align="center"><a href="README.md"><strong>🇬🇧 English</strong></a> · <a href="README.ru.md">🇷🇺 Русский</a></p>
+
+<p align="center"><img src="assets/stickers-en.svg" width="760" alt="BURO stickers: ask BURO, typed facts, one SQLite database, diff first"></p>
 
 BURO replaces scattered agent context files and retrieval pipelines for facts
 you can name: ownership, paths, entry documents, and operating constraints. A
@@ -87,7 +89,7 @@ private records are not bundled.
 
 ## Where to go next
 
-| Topic | English | Русский |
+| Topic | 🇬🇧 English | 🇷🇺 Русский |
 | --- | --- | --- |
 | Editing and reviewing facts | [Draft workflow](docs/draft-workflow.md) | [Черновики](docs/draft-workflow.ru.md) |
 | Entity model and custom presets | [Model](docs/model.md) | [Модель](docs/model.ru.md) |

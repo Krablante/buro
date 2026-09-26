@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="190" viewBox="0 0 800 190" role="img" aria-labelledby="title desc">
+  <title id="title">Стикеры BURO</title>
+  <desc id="desc">Спроси BURO, факты по схеме, один SQLite, сначала diff.</desc>
+  <defs>
+    <filter id="shadow" x="-15%" y="-20%" width="130%" height="150%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#11151d" flood-opacity=".22"/>
+    </filter>
+    <style>
+      text { font-family: Inter, 'DejaVu Sans', Arial, sans-serif; }
+      .big { font-weight: 800; letter-spacing: -.6px; }
+      .small { font-weight: 700; font-size: 10px; letter-spacing: .6px; }
+    </style>
+  </defs>
+
+  <g filter="url(#shadow)" transform="rotate(-7 91 95)">
+    <circle cx="91" cy="95" r="64" fill="#f4efe6" stroke="#b0303e" stroke-width="5"/>
+    <circle cx="91" cy="95" r="53" fill="none" stroke="#11151d" stroke-width="1.5" stroke-dasharray="3 5"/>
+    <path d="M91 47l3 7 7 3-7 3-3 7-3-7-7-3 7-3zm0 77l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" fill="#b0303e"/>
+    <text x="91" y="88" class="big" font-size="17" text-anchor="middle" fill="#11151d">СПРОСИ</text>
+    <text x="91" y="109" class="big" font-size="18" text-anchor="middle" fill="#11151d">BURO</text>
+    <text x="91" y="124" class="small" text-anchor="middle" fill="#b0303e">ПЕРЕД ДЕЛОМ</text>
+  </g>
+
+  <g filter="url(#shadow)" transform="rotate(3 271 95)">
+    <rect x="177" y="34" width="188" height="121" rx="17" fill="#11151d" stroke="#f4efe6" stroke-width="4"/>
+    <path d="M197 56h147" stroke="#b0303e" stroke-width="3"/>
+    <text x="197" y="88" class="big" font-size="25" fill="#f4efe6">ФАКТЫ</text>
+    <text x="197" y="116" class="big" font-size="19" fill="#f4efe6">ПО СХЕМЕ</text>
+    <text x="197" y="140" class="small" fill="#dc7b83">БЕЗ ДОГАДОК</text>
+  </g>
+
+  <g filter="url(#shadow)" transform="rotate(-2 473 95)">
+    <rect x="388" y="34" width="178" height="121" rx="12" fill="#f4efe6" stroke="#11151d" stroke-width="3"/>
+    <path d="M389 56h176" stroke="#b0303e" stroke-width="5"/>
+    <text x="407" y="89" class="big" font-size="23" fill="#11151d">ОДИН</text>
+    <text x="407" y="118" class="big" font-size="23" fill="#11151d">SQLITE</text>
+    <text x="407" y="139" class="small" fill="#b0303e">ОДИН ИСТОЧНИК</text>
+    <path d="M540 91c-11 0-18 3-18 7v24c0 4 7 7 18 7s18-3 18-7V98c0-4-7-7-18-7zm-18 7c0 4 7 7 18 7s18-3 18-7m-36 12c0 4 7 7 18 7s18-3 18-7" fill="none" stroke="#b0303e" stroke-width="2"/>
+  </g>
+
+  <g filter="url(#shadow)" transform="rotate(4 689 95)">
+    <path d="M598 38l169-7 10 111-173 13-22-31 11-26-11-27z" fill="#b0303e" stroke="#f4efe6" stroke-width="4" stroke-linejoin="round"/>
+    <circle cx="600" cy="96" r="5" fill="#f4efe6"/>
+    <text x="682" y="89" class="big" font-size="19" text-anchor="middle" fill="#fff">СНАЧАЛА</text>
+    <text x="682" y="117" class="big" font-size="27" text-anchor="middle" fill="#fff">DIFF</text>
+    <text x="682" y="138" class="small" text-anchor="middle" fill="#f4efe6">ПОТОМ PUSH</text>
+  </g>
+</svg>

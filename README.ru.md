@@ -4,7 +4,9 @@
 
 <p align="center">Типизированный реестр проектов, сервисов, хостов и правил работы с ними.<br>Одна команда даёт человеку и агенту одинаковые записанные сведения на любой машине с Node.js.</p>
 
-<p align="center"><a href="README.md">English</a> · <a href="README.ru.md"><strong>Русский</strong></a></p>
+<p align="center"><a href="README.md">🇬🇧 English</a> · <a href="README.ru.md"><strong>🇷🇺 Русский</strong></a></p>
+
+<p align="center"><img src="assets/stickers-ru.svg" width="760" alt="Стикеры BURO: спроси BURO, факты по схеме, один SQLite, сначала diff"></p>
 
 BURO собирает адресные сведения, ради которых обычно плодят файлы с правилами
 для агентов или поисковые пайплайны: владельца, путь, стартовые документы и
@@ -87,7 +89,7 @@ buro init
 
 ## Читать дальше
 
-| Тема | Русский | English |
+| Тема | 🇷🇺 Русский | 🇬🇧 English |
 | --- | --- | --- |
 | Изменение и проверка фактов | [Черновики](docs/draft-workflow.ru.md) | [Draft workflow](docs/draft-workflow.md) |
 | Сущности и свои пресеты | [Модель](docs/model.ru.md) | [Model](docs/model.md) |
