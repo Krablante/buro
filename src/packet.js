@@ -1,4 +1,5 @@
 import yaml from "js-yaml";
+import { fieldDefinition } from "./schema.js";
 
 function relation(target, current) {
   if (!current) return "current context unknown";
@@ -7,23 +8,24 @@ function relation(target, current) {
 
 function visibleFields(entity, schema) {
   return schema.kinds[entity.kind].fields.filter((name) => (
-    entity[name] !== undefined && schema.fields[name].packet !== false
+    entity[name] !== undefined && fieldDefinition(schema, entity.kind, name).packet !== false
+      && (!Array.isArray(entity[name]) || entity[name].length > 0)
   ));
 }
 
 export function entityPacket(entity, schema, currentContext = null, contextEntity = null) {
-  const context = entity.kind === schema.context.kind ? entity : contextEntity;
+  const context = entity.kind === schema.context?.kind ? entity : contextEntity;
   const sections = [];
   const bySection = new Map();
   for (const name of visibleFields(entity, schema)) {
-    const sectionName = schema.fields[name].section || "facts";
+    const sectionName = fieldDefinition(schema, entity.kind, name).section || "facts";
     if (!bySection.has(sectionName)) {
       const guide = schema.sections?.[sectionName]?.guide;
       const section = { name: sectionName, ...(guide ? { guide } : {}), fields: [] };
       bySection.set(sectionName, section);
       sections.push(section);
     }
-    const guide = schema.fields[name].guide;
+    const guide = fieldDefinition(schema, entity.kind, name).guide;
     bySection.get(sectionName).fields.push({ name, ...(guide ? { guide } : {}), value: entity[name] });
   }
   return {

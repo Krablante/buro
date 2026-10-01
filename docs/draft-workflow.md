@@ -27,6 +27,12 @@ If someone else changed the record, pull a fresh draft and review the edit
 again. Even a large draft can be reviewed without allocating a quadratic
 diff table; a mostly rewritten region may appear as removed and added lines.
 
+Only known, relevant fields need filling. A record can contain just its
+identity and one rule. A standard location path without a host gets the current
+client machine; `diff` shows that value before saving. Do not clear an unrelated
+draft to start another task. Complete or deliberately preserve the draft before
+changing type definitions.
+
 The default draft path is `<instance_root>/BURO_DRAFT.yaml`. Set `draft_path`
 or `BURO_DRAFT_PATH` to change it. A client keeps its draft locally and sends
 validated entity JSON with its revision to the server; the server stores no

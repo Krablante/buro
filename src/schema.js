@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import path from "node:path";
 import yaml from "js-yaml";
 
 const CORE_FIELDS = ["id", "name", "kind"];
 const RESERVED_FIELDS = new Set([...CORE_FIELDS, "updated_at", "__buro"]);
 const FIELD_TYPES = new Set(["string", "text", "boolean", "integer", "number", "ref", "string-list", "record", "record-list"]);
 const TOP_LEVEL_KEYS = new Set(["id", "version", "default_kind", "context", "sections", "field_sets", "kinds", "fields"]);
-const KIND_KEYS = new Set(["label", "field_sets", "fields"]);
+const KIND_KEYS = new Set(["label", "field_sets", "fields", "definitions"]);
 const FIELD_KEYS = new Set(["type", "target_kind", "section", "guide", "fields", "paired_fields", "required", "default", "packet", "draft_optional"]);
 const CONTEXT_KEYS = new Set(["kind", "alias_field", "member_field", "root_field"]);
 const SECTION_KEYS = new Set(["guide", "draft_guide"]);
@@ -98,7 +99,10 @@ function schemaHash(schema) {
     default_kind: schema.default_kind,
     context: schema.context,
     field_sets: schema.field_sets,
-    kinds: schema.kinds,
+    kinds: Object.fromEntries(Object.entries(schema.kinds).map(([name, kind]) => [name, {
+      ...kind,
+      ...(kind.definitions ? { definitions: Object.fromEntries(Object.entries(kind.definitions).map(([field, definition]) => [field, modelField(definition)])) } : {}),
+    }])),
     fields: Object.fromEntries(Object.entries(schema.fields).map(([name, field]) => [name, modelField(field)])),
   });
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
@@ -154,35 +158,50 @@ export function normalizeSchema(input, source = "BURO schema") {
     }
     kindFieldNames.push(...directFields);
     const uniqueFields = [...new Set(kindFieldNames)];
-    for (const fieldName of uniqueFields) {
-      if (!fields[fieldName]) throw new Error(`${source} kind ${kindName} references unknown field: ${fieldName}`);
+    const definitions = kind.definitions || {};
+    if (!plainObject(definitions)) throw new Error(`${source} kind ${kindName}.definitions must be an object`);
+    for (const [name, field] of Object.entries(definitions)) {
+      if (RESERVED_FIELDS.has(name)) throw new Error(`${source} field ${name} is reserved`);
+      validateFieldDefinition(name, field);
+      if (!uniqueFields.includes(name)) throw new Error(`${source} kind ${kindName} has unused definition: ${name}`);
     }
-    kinds[kindName] = { ...(kind.label ? { label: kind.label } : {}), field_sets: setNames, fields: uniqueFields };
+    for (const fieldName of uniqueFields) {
+      if (!definitions[fieldName] && !fields[fieldName]) throw new Error(`${source} kind ${kindName} references unknown field: ${fieldName}`);
+    }
+    kinds[kindName] = { ...(kind.label ? { label: kind.label } : {}), field_sets: setNames, fields: uniqueFields,
+      ...(Object.keys(definitions).length ? { definitions } : {}) };
   }
 
   const defaultKind = requireString(input.default_kind, `${source} default_kind`);
   if (!kinds[defaultKind]) throw new Error(`${source} default_kind is unknown: ${defaultKind}`);
-  if (!plainObject(input.context)) throw new Error(`${source} context must be an object`);
-  rejectUnknownKeys(input.context, CONTEXT_KEYS, `${source} context`);
-  const context = {
-    kind: requireString(input.context.kind, `${source} context.kind`),
-    alias_field: requireString(input.context.alias_field, `${source} context.alias_field`),
-    member_field: requireString(input.context.member_field, `${source} context.member_field`),
-    ...(input.context.root_field ? { root_field: requireString(input.context.root_field, `${source} context.root_field`) } : {}),
-  };
-  if (!kinds[context.kind]) throw new Error(`${source} context.kind is unknown: ${context.kind}`);
-  const alias = fields[context.alias_field];
-  if (!alias || alias.type !== "string-list" || !kinds[context.kind].fields.includes(context.alias_field)) {
-    throw new Error(`${source} context.alias_field must be a string-list on ${context.kind}`);
-  }
-  const member = fields[context.member_field];
-  if (!member || member.type !== "ref" || member.target_kind !== context.kind) {
-    throw new Error(`${source} context.member_field must be a ref targeting ${context.kind}`);
-  }
-  if (context.root_field) {
-    const root = fields[context.root_field];
-    if (!root || root.type !== "string" || !kinds[context.kind].fields.includes(context.root_field)) {
-      throw new Error(`${source} context.root_field must be a string on ${context.kind}`);
+  let context = null;
+  if (input.context !== undefined && input.context !== null) {
+    if (!plainObject(input.context)) throw new Error(`${source} context must be an object`);
+    rejectUnknownKeys(input.context, CONTEXT_KEYS, `${source} context`);
+    context = { kind: requireString(input.context.kind, `${source} context.kind`) };
+    for (const key of ["alias_field", "member_field", "root_field"]) {
+      if (input.context[key] !== undefined) context[key] = requireString(input.context[key], `${source} context.${key}`);
+    }
+    if (!kinds[context.kind]) throw new Error(`${source} context.kind is unknown: ${context.kind}`);
+    if (context.alias_field) {
+      const alias = kinds[context.kind].definitions?.[context.alias_field] || fields[context.alias_field];
+      if (!alias || alias.type !== "string-list" || !kinds[context.kind].fields.includes(context.alias_field)) {
+        throw new Error(`${source} context.alias_field must be a string-list on ${context.kind}`);
+      }
+    }
+    if (context.member_field) {
+      const member = fields[context.member_field];
+      const locationMember = Object.values(kinds).some((kind) => (kind.definitions?.[context.member_field] || member)?.type === "record-list"
+        && (kind.definitions?.[context.member_field] || member)?.fields?.host?.type === "string");
+      if (!locationMember && (!member || member.type !== "ref" || member.target_kind !== context.kind)) {
+        throw new Error(`${source} context.member_field must be a host location list or a ref targeting ${context.kind}`);
+      }
+    }
+    if (context.root_field) {
+      const root = kinds[context.kind].definitions?.[context.root_field] || fields[context.root_field];
+      if (!root || root.type !== "string" || !kinds[context.kind].fields.includes(context.root_field)) {
+        throw new Error(`${source} context.root_field must be a string on ${context.kind}`);
+      }
     }
   }
   for (const [name, field] of Object.entries(fields)) {
@@ -191,7 +210,7 @@ export function normalizeSchema(input, source = "BURO schema") {
     }
   }
   for (const sectionName of Object.keys(sections)) {
-    if (!Object.values(fields).some((field) => (field.section || "facts") === sectionName)) {
+    if (![...Object.values(fields), ...Object.values(kinds).flatMap((kind) => Object.values(kind.definitions || {}))].some((field) => (field.section || "facts") === sectionName)) {
       throw new Error(`${source} section ${sectionName} is not used by any field`);
     }
   }
@@ -209,6 +228,12 @@ export function normalizeSchema(input, source = "BURO schema") {
   for (const [name, field] of Object.entries(fields)) {
     if (Object.hasOwn(field, "default")) normalizeFieldValue(field.default, field, `schema field ${name}.default`);
   }
+  for (const kind of Object.values(kinds)) {
+    for (const [name, field] of Object.entries(kind.definitions || {})) {
+      if (field.type === "ref" && field.target_kind && !kinds[field.target_kind]) throw new Error(`${source} field ${name} targets unknown kind: ${field.target_kind}`);
+      if (Object.hasOwn(field, "default")) normalizeFieldValue(field.default, field, `schema field ${name}.default`);
+    }
+  }
   return Object.freeze({
     ...normalized,
     source,
@@ -217,9 +242,48 @@ export function normalizeSchema(input, source = "BURO schema") {
   });
 }
 
-export function loadSchema(schemaPath = DEFAULT_SCHEMA_PATH) {
-  const text = readFileSync(schemaPath, "utf8");
-  return normalizeSchema(yaml.load(text), schemaPath);
+export function loadTypeDefinition(value) {
+  const filePath = /^[a-z][a-z0-9-]*$/.test(value)
+    ? fileURLToPath(new URL(`../types/${value}.yaml`, import.meta.url)) : path.resolve(value);
+  const definition = yaml.load(readFileSync(filePath, "utf8"));
+  if (!plainObject(definition)) throw new Error(`type definition ${filePath} must be an object`);
+  rejectUnknownKeys(definition, new Set(["id", "label", "fields"]), `type definition ${filePath}`);
+  requireString(definition.id, `type definition ${filePath} id`);
+  if (!plainObject(definition.fields)) throw new Error(`type definition ${filePath} fields must be an object`);
+  return { definition, filePath };
+}
+
+export function loadSchema(input = DEFAULT_SCHEMA_PATH) {
+  const config = typeof input === "object" ? input : { schemaPath: input };
+  let model = {};
+  if (!config.typeFiles) model = yaml.load(readFileSync(config.schemaPath || DEFAULT_SCHEMA_PATH, "utf8"));
+  if (!plainObject(model)) throw new Error("BURO model must be a YAML object");
+  const typeFiles = config.typeFiles || model.type_files;
+  if (!typeFiles) return normalizeSchema(model, config.schemaPath);
+  if (!Array.isArray(typeFiles) || !typeFiles.length || typeFiles.some((value) => typeof value !== "string" || !value.trim())) throw new Error("type_files must be a non-empty list of names or YAML paths");
+  const kinds = {};
+  const sources = [];
+  for (const value of typeFiles) {
+    const resolved = /^[a-z][a-z0-9-]*$/.test(value) ? value : path.resolve(path.dirname(config.schemaPath || DEFAULT_SCHEMA_PATH), value);
+    const { definition, filePath } = loadTypeDefinition(resolved);
+    if (kinds[definition.id]) throw new Error(`duplicate active type: ${definition.id}; select one definition per type`);
+    kinds[definition.id] = { ...(definition.label ? { label: definition.label } : {}), fields: Object.keys(definition.fields), definitions: definition.fields };
+    sources.push(filePath);
+  }
+  const host = kinds.host?.definitions;
+  const context = host ? {
+    kind: "host",
+    ...(host.aliases?.type === "string-list" ? { alias_field: "aliases" } : {}),
+    ...(Object.values(kinds).some((kind) => kind.definitions.locations?.type === "record-list" && kind.definitions.locations.fields.host?.type === "string") ? { member_field: "locations" } : {}),
+    ...(host.root?.type === "string" ? { root_field: "root" } : {}),
+  } : null;
+  return normalizeSchema({ id: model.id || "starter", version: model.version || 3,
+    default_kind: config.defaultKind || model.default_kind || (kinds.project ? "project" : Object.keys(kinds)[0]),
+    fields: {}, kinds, context }, sources.join(", "));
+}
+
+export function fieldDefinition(schema, kind, name) {
+  return schema.kinds[kind]?.definitions?.[name] || schema.fields[name];
 }
 
 export function kindFields(schema, kind) {
@@ -296,7 +360,7 @@ export function normalizeEntity(input, schema, options = {}) {
   if (unknown.length) throw new Error(`unsupported ${kind} field${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`);
   const entity = { id, name, kind };
   for (const fieldName of fields) {
-    const field = schema.fields[fieldName];
+    const field = fieldDefinition(schema, kind, fieldName);
     let value = input[fieldName];
     if (value === undefined && Object.hasOwn(field, "default")) value = field.default;
     const normalized = normalizeFieldValue(value, field, fieldName);
@@ -304,6 +368,17 @@ export function normalizeEntity(input, schema, options = {}) {
     if (!options.allowMissingRequired && field.required && normalized === undefined) throw new Error(`${fieldName} is required`);
   }
   if (input.updated_at) entity.updated_at = String(input.updated_at);
+  const locations = fieldDefinition(schema, kind, "locations");
+  if (locations?.type === "record-list" && locations.fields.host?.type === "string" && options.currentContext) {
+    const locationKey = (value) => JSON.stringify([value.host, value.path, value.url]);
+    const previous = new Set((options.previous?.locations || []).map(locationKey));
+    for (const location of entity.locations || []) {
+      const unchanged = previous.has(locationKey(location));
+      if (location.path && !location.host && !unchanged) location.host = options.currentContext;
+      if (location.path && !/^(\/|[A-Za-z]:[\\/]|\\\\)/.test(location.path) && !unchanged) throw new Error("locations.path must be absolute; resolve it on its owning machine before saving");
+      if (!location.path && !location.url && !location.host) throw new Error("a location needs a path, URL, or host");
+    }
+  }
   return entity;
 }
 
@@ -312,7 +387,7 @@ export function newEntity(id, kind, schema) {
   kindFields(schema, entityKind);
   const entity = { id: String(id || "").trim(), name: String(id || "").trim(), kind: entityKind };
   for (const fieldName of kindFields(schema, entityKind)) {
-    const field = schema.fields[fieldName];
+    const field = fieldDefinition(schema, entityKind, fieldName);
     if (Object.hasOwn(field, "default")) entity[fieldName] = field.default;
   }
   return entity;

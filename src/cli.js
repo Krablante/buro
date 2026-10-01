@@ -1,10 +1,13 @@
 #!/usr/bin/env node
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { createApiClient } from "./api-client.js";
+import { agentContract, connectAgent, fullAgentWorkflow } from "./agent.js";
 import { serve } from "./api.js";
 import { hasDirectStorage, loadConfig } from "./config.js";
 import {
@@ -16,7 +19,8 @@ import {
   writeEntityDraft,
   writeNewEntityDraft,
 } from "./draft.js";
-import { backupDatabase, initDb } from "./db.js";
+import { backupDatabase } from "./db.js";
+import { initializeRegistry } from "./migration.js";
 import {
   renderCliError,
   renderCurrentContext,
@@ -42,7 +46,7 @@ import {
   resolveEntityPacket,
   updateEntityRecord,
 } from "./resolver.js";
-import { loadSchema, normalizeSchema } from "./schema.js";
+import { loadSchema, loadTypeDefinition, normalizeEntity, normalizeSchema } from "./schema.js";
 
 const require = createRequire(import.meta.url);
 const { version: PACKAGE_VERSION } = require("../package.json");
@@ -57,6 +61,10 @@ function parseArgs(argv) {
       continue;
     }
     const name = token.slice(2).replaceAll("-", "_");
+    if (["help", "version", "dry_run", "brief", "full", "adopt"].includes(name)) {
+      options[name] = true;
+      continue;
+    }
     const next = argv[index + 1];
     if (!next || next.startsWith("--")) options[name] = true;
     else { options[name] = next; index += 1; }
@@ -95,8 +103,8 @@ function dataClient(config, localSchema) {
     const options = localOptions(config, localSchema);
     return {
       schema: async () => localSchema,
-      entitySummaries: (kind) => resolveEntitySummaries(kind, options),
-      current: () => resolveCurrentContext(options),
+      entitySummaries: (kind, page) => resolveEntitySummaries(kind, { ...options, ...page }),
+      current: (brief) => resolveCurrentContext({ ...options, brief }),
       entity: (id) => resolveEntity(id, options),
       createEntity: (id, entity) => createEntityRecord(id, entity, options),
       updateEntity: (id, entity, revision) => updateEntityRecord(id, entity, { ...options, expectedUpdatedAt: revision }),
@@ -110,18 +118,18 @@ function dataClient(config, localSchema) {
   const api = createApiClient(config.apiUrl);
   return {
     schema: async () => normalizeSchema(await api.schema(), `API ${config.apiUrl}/schema`),
-    entitySummaries: (kind) => api.entitySummaries(kind, config.currentContext),
-    current: async () => {
+    entitySummaries: (kind, page) => api.entitySummaries(kind, config.currentContext, page),
+    current: async (brief) => {
       try {
-        return await api.current(config.currentContext);
+        return await api.current(config.currentContext, brief);
       } catch (error) {
         if (error instanceof Error && error.message.startsWith("BURO API 404: current context not found:")) return null;
         throw error;
       }
     },
     entity: (id) => api.entity(id),
-    createEntity: (id, entity) => api.createEntity(id, entity),
-    updateEntity: (id, entity, revision) => api.updateEntity(id, entity, revision),
+    createEntity: (id, entity) => api.createEntity(id, entity, config.currentContext),
+    updateEntity: (id, entity, revision) => api.updateEntity(id, entity, revision, config.currentContext),
     deleteEntity: (id, revision) => api.deleteEntity(id, revision),
     packetText: async (id) => renderPacket(await api.entityPacket(id, config.currentContext)),
   };
@@ -136,18 +144,17 @@ async function getEntityOrNull(client, id) {
   }
 }
 
-async function printCurrentContext(client, config, schema) {
-  const current = await client.current();
+async function printCurrentContext(client, config, schema, brief) {
+  const current = await client.current(brief);
   const context = current?.context;
-  if (!context) {
-    throw new Error(`${schema.context.kind} not found for current context ${config.currentContext}; create it with \`buro draft new ${config.currentContext} ${schema.context.kind}\``);
-  }
+  if (!context) throw new Error("BURO API did not return machine context");
   process.stdout.write(renderCurrentContext({
     currentContext: context.id,
     home: process.env.HOME || homedir(),
-    contextRoot: schema.context.root_field ? context[schema.context.root_field] : undefined,
-    packetText: renderPacket(current.packet),
+    contextRoot: schema.context?.root_field ? context[schema.context.root_field] : undefined,
+    packetText: current.packet ? renderPacket(current.packet) : "No machine-wide rules recorded.",
     members: current.members,
+    brief,
   }));
 }
 
@@ -188,7 +195,8 @@ async function runDraftCommand(args, options, config, client, schema) {
   if (action === "new") {
     const id = requireArg(args[2], "draft new requires an entity id");
     const kind = args[3] || schema.default_kind;
-    if (await getEntityOrNull(client, id)) throw new Error(`entity already exists: ${id}`);
+    const existing = await getEntityOrNull(client, id);
+    if (existing?.id === id) throw new Error(`entity already exists: ${id}`);
     const filePath = await writeNewEntityDraft(id, kind, draftOptions, schema);
     process.stdout.write(renderDraftEntityReady({ filePath, id, mode: `new ${kind}`, target }));
     return 0;
@@ -219,8 +227,10 @@ async function runDraftCommand(args, options, config, client, schema) {
       }));
       return 0;
     }
-    const existing = await getEntityOrNull(client, draft.entity.id);
-    if (draft.mode === "create" && existing) throw new Error(`entity already exists: ${draft.entity.id}`);
+    const found = await getEntityOrNull(client, draft.entity.id);
+    const existing = draft.mode === "create" && found?.id !== draft.entity.id ? null : found;
+    draft.entity = normalizeEntity(draft.entity, schema, { currentContext: config.currentContext, previous: existing });
+    if (draft.mode === "create" && existing?.id === draft.entity.id) throw new Error(`entity already exists: ${draft.entity.id}`);
     if (draft.mode === "update") {
       if (!existing) throw new Error(`entity not found: ${draft.entity.id}`);
       assertFreshRevision(existing, draft.metadata);
@@ -247,12 +257,14 @@ async function runDraftCommand(args, options, config, client, schema) {
     }
     let action;
     if (draft.mode === "create") {
+      draft.entity = normalizeEntity(draft.entity, schema, { currentContext: config.currentContext });
       await client.createEntity(draft.entity.id, draft.entity);
       action = "created";
     } else {
       const existing = await getEntityOrNull(client, draft.entity.id);
       if (!existing) throw new Error(`entity not found: ${draft.entity.id}`);
       assertFreshRevision(existing, draft.metadata);
+      draft.entity = normalizeEntity(draft.entity, schema, { currentContext: config.currentContext, previous: existing });
       if (!sameEntity(existing, draft.entity)) {
         await client.updateEntity(draft.entity.id, draft.entity, draft.metadata.base_updated_at);
         action = "updated";
@@ -277,8 +289,19 @@ export async function runCli(argv = process.argv.slice(2)) {
 
   const config = loadConfig();
   const command = args[0];
+  if (command === "agent") {
+    rejectOptions(options, ["full"]);
+    process.stdout.write(options.full ? await fullAgentWorkflow() : agentContract());
+    return 0;
+  }
+  if (command === "connect") {
+    rejectOptions(options, ["path"]);
+    const files = await connectAgent(requireArg(args[1], "connect requires an agent name"), options);
+    console.log(`BURO connected:\n${files.join("\n")}\nStart a new agent session; restart OpenCode/OpenCodez after plugin installation.`);
+    return 0;
+  }
   const direct = hasDirectStorage(config);
-  const localSchema = direct ? loadSchema(config.schemaPath) : null;
+  const localSchema = direct ? loadSchema(config) : null;
 
   if (options.help) {
     rejectOptions(options, ["help"]);
@@ -288,19 +311,22 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
 
   if (command === "init") {
-    rejectOptions(options);
+    rejectOptions(options, ["dry_run"]);
     requireDirectStorage(command, config);
-    let backupPath = null;
-    if (existsSync(config.databasePath) && statSync(config.databasePath).size > 0) {
-      backupPath = await backupDatabase(config.databasePath, config);
-    }
-    const result = await initDb(config.databasePath, localSchema, { adoptSchema: true });
-    console.log(`BURO SQLite ready: ${config.databasePath}`);
+    const result = await initializeRegistry(config, localSchema, { dryRun: options.dry_run === true });
+    console.log(`BURO SQLite ${options.dry_run ? "preview" : "ready"}: ${config.databasePath}`);
     console.log(`Preset: ${localSchema.id} v${localSchema.version}`);
-    if (backupPath) console.log(`Pre-init backup: ${backupPath}`);
-    const entities = await resolveEntities(localOptions(config, localSchema));
-    if (!entities.length) console.log(`Next: buro draft new ${config.currentContext} ${localSchema.context.kind}`);
-    if (result.adopted) console.log("Preset binding adopted after complete entity validation.");
+    if (result.backupPath) console.log(`Pre-init backup: ${result.backupPath}`);
+    console.log(`Records: ${result.count}; migrated: ${result.transformed}`);
+    if (result.created) console.log("Ready to add records; no host record is required.\nConnect your agent: buro connect <agent>");
+    if (!options.dry_run && !existsSync(config.configPath)) {
+      await mkdir(path.dirname(config.configPath), { recursive: true });
+      const initial = process.env.BURO_SCHEMA_PATH ? { schema_path: config.schemaPath }
+        : config.preset === "starter" ? { type_files: ["project", "service", "host", "item"] } : { preset: config.preset };
+      await writeFile(config.configPath, `${JSON.stringify(initial, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+      console.log(`Configuration: ${config.configPath}`);
+    }
+    if (result.adopted) console.log(options.dry_run ? "Definitions can be adopted after complete saved-record validation." : "Definitions validated against all saved records and adopted.");
     return 0;
   }
   if (command === "backup") {
@@ -337,7 +363,7 @@ export async function runCli(argv = process.argv.slice(2)) {
     return 0;
   }
 
-  rejectOptions(options);
+  rejectOptions(options, command === "current" ? ["brief"] : ["list", "search"].includes(command) ? ["limit", "offset"] : []);
   const client = dataClient(config, localSchema);
   const schema = direct ? localSchema : await client.schema();
   if (!command || command === "help") {
@@ -348,19 +374,39 @@ export async function runCli(argv = process.argv.slice(2)) {
     process.stdout.write(args[1] ? renderKindSchema(schema, args[1]) : renderSchemaSummary(schema));
     return 0;
   }
-  if (command === "list") {
-    const kind = args[1];
+  if (command === "types") {
+    if (args[1] === "copy") {
+      const { filePath } = loadTypeDefinition(requireArg(args[2], "types copy requires a built-in type"));
+      const target = path.resolve(requireArg(args[3], "types copy requires a destination YAML file"));
+      if (existsSync(target)) throw new Error(`file already exists: ${target}`);
+      await mkdir(path.dirname(target), { recursive: true });
+      await copyFile(filePath, target);
+      console.log(`Type definition copied: ${target}\nSelect it in config.json type_files instead of the built-in name, then run buro init --dry-run and buro init.`);
+    } else process.stdout.write(args[1] ? renderKindSchema(schema, args[1]) : `${[
+      "BURO record types",
+      `default: ${schema.default_kind}`,
+      ...Object.entries(schema.kinds).map(([name, definition]) => `- ${name}${definition.label ? ` — ${definition.label}` : ""}`),
+    ].join("\n")}\n`);
+    return 0;
+  }
+  if (command === "list" || command === "search") {
+    const kind = command === "list" ? args[1] : undefined;
     if (kind && !schema.kinds[kind]) throw new Error(`unsupported entity kind: ${kind}`);
-    const result = await client.entitySummaries(kind);
+    const limit = Number(options.limit ?? 100);
+    const offset = Number(options.offset ?? 0);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000 || !Number.isInteger(offset) || offset < 0) throw new Error("limit must be 1..1000; offset must be nonnegative");
+    const query = command === "search" ? requireArg(args[1], "search requires text") : undefined;
+    const result = await client.entitySummaries(kind, { limit, offset, query });
     for (const entity of result.entities) console.log(renderEntityListLine(entity, result.current_context));
+    if (result.entities.length === limit) console.log(`# Next page: --limit ${limit} --offset ${offset + limit}`);
     return 0;
   }
   if (command === "current") {
-    await printCurrentContext(client, config, schema);
+    await printCurrentContext(client, config, schema, options.brief === true);
     return 0;
   }
   if (command === "draft") return runDraftCommand(args, options, config, client, schema);
-  const text = await client.packetText(command);
+  const text = await client.packetText(command === "get" ? requireArg(args[1], "get requires an id or name") : command);
   if (!text) throw new Error(`entity not found: ${command}`);
   process.stdout.write(text);
   return 0;

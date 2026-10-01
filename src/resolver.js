@@ -13,6 +13,7 @@ import {
   listEntityIds,
   listEntitySummaries,
   listMemberSummaries,
+  lookupEntities,
   openDatabase,
   replaceEntities,
   schemaSql,
@@ -20,7 +21,7 @@ import {
   withWriteTransaction,
 } from "./db.js";
 import { entityPacket, renderPacket } from "./packet.js";
-import { loadSchema, normalizeEntity } from "./schema.js";
+import { fieldDefinition, loadSchema, normalizeEntity } from "./schema.js";
 
 let mutationTail = Promise.resolve();
 
@@ -51,7 +52,7 @@ function resolverConfig(options = {}) {
     backupDir: options.backupDir || loaded.backupDir,
     backupRetention: options.backupRetention || loaded.backupRetention,
     currentContext: contextKey(options.currentContext || config.currentContext),
-    schema: options.schema || loadSchema(options.schemaPath || config.schemaPath),
+    schema: options.schema || loadSchema(config),
   };
 }
 
@@ -63,7 +64,27 @@ async function backupBeforeMutation(config) {
 }
 
 function contextKeys(entity, schema) {
-  return [...new Set([entity.id, ...(entity[schema.context.alias_field] || [])].map(contextKey).filter(Boolean))];
+  return [...new Set([entity.id, ...(entity[schema.context?.alias_field] || [])].map(contextKey).filter(Boolean))];
+}
+
+function references(entity, schema) {
+  const result = [];
+  function walk(value, field, label) {
+    if (value === undefined) return;
+    if (field.type === "ref") result.push({ id: value, kind: field.target_kind, label });
+    if (field.type === "record" || field.type === "record-list") {
+      for (const record of field.type === "record-list" ? value : [value]) {
+        for (const [name, nested] of Object.entries(field.fields)) walk(record[name], nested, `${label}.${name}`);
+      }
+    }
+  }
+  for (const name of schema.kinds[entity.kind].fields) walk(entity[name], fieldDefinition(schema, entity.kind, name), name);
+  return result;
+}
+
+async function normalizeRecord(payload, config, previous) {
+  try { return normalizeEntity(payload, config.schema, { currentContext: config.currentContext, previous }); }
+  catch (error) { error.status = 400; throw error; }
 }
 
 function contextMatches(entity, value, schema) {
@@ -71,18 +92,17 @@ function contextMatches(entity, value, schema) {
 }
 
 async function validateReferences(entity, config) {
-  for (const fieldName of config.schema.kinds[entity.kind].fields) {
-    const field = config.schema.fields[fieldName];
-    if (field.type !== "ref" || !field.target_kind || entity[fieldName] === undefined) continue;
-    const target = await getEntity(entity[fieldName], config.database, config.schema);
-    if (!target) throw conflict(`${fieldName} references missing entity: ${entity[fieldName]}`);
-    if (target.kind !== field.target_kind) {
-      throw conflict(`${fieldName} must reference ${field.target_kind}, got ${target.kind}: ${target.id}`);
+  for (const ref of references(entity, config.schema)) {
+    const target = await getEntity(ref.id, config.database, config.schema);
+    if (!target) throw conflict(`${ref.label} references missing entity: ${ref.id}`);
+    if (ref.kind && target.kind !== ref.kind) {
+      throw conflict(`${ref.label} must reference ${ref.kind}, got ${target.kind}: ${target.id}`);
     }
   }
 }
 
 async function validateLookupIdentity(entity, config) {
+  if (!config.schema.context) return;
   const contexts = await listEntities(config.database, config.schema, { kind: config.schema.context.kind });
   if (entity.kind === config.schema.context.kind) {
     const candidateKeys = new Set(contextKeys(entity, config.schema));
@@ -108,16 +128,20 @@ async function validateLookupIdentity(entity, config) {
 async function validateNotReferenced(entityId, config) {
   for (const entity of await listEntities(config.database, config.schema)) {
     if (entity.id === entityId) continue;
-    for (const fieldName of config.schema.kinds[entity.kind].fields) {
-      if (config.schema.fields[fieldName].type === "ref" && entity[fieldName] === entityId) {
-        throw conflict(`cannot delete ${entityId}; referenced by ${entity.id}.${fieldName}`);
+    for (const ref of references(entity, config.schema)) {
+      if (ref.id === entityId) {
+        throw conflict(`cannot delete ${entityId}; referenced by ${entity.id}.${ref.label}`);
       }
     }
   }
 }
 
 async function resolveContext(value, config) {
-  const matches = (await listEntities(config.database, config.schema, { kind: config.schema.context.kind }))
+  if (!config.schema.context) return null;
+  const exact = await getEntity(value, config.database, config.schema);
+  if (exact?.kind === config.schema.context.kind) return exact;
+  const matches = (await lookupEntities(value, config.database, config.schema))
+    .filter((entity) => entity.kind === config.schema.context.kind)
     .filter((entity) => contextMatches(entity, value, config.schema));
   if (matches.length > 1) throw new Error(`ambiguous current context ${value}: ${matches.map((entity) => entity.id).join(", ")}`);
   return matches[0] || null;
@@ -132,16 +156,14 @@ export function validateEntitySet(input, schema) {
   }
   const contextOwners = new Map();
   for (const entity of entities) {
-    for (const fieldName of schema.kinds[entity.kind].fields) {
-      const field = schema.fields[fieldName];
-      if (field.type !== "ref" || !field.target_kind || entity[fieldName] === undefined) continue;
-      const target = byId.get(entity[fieldName]);
-      if (!target) throw new Error(`${entity.id}.${fieldName} references missing entity: ${entity[fieldName]}`);
-      if (target.kind !== field.target_kind) {
-        throw new Error(`${entity.id}.${fieldName} must reference ${field.target_kind}, got ${target.kind}: ${target.id}`);
+    for (const ref of references(entity, schema)) {
+      const target = byId.get(ref.id);
+      if (!target) throw new Error(`${entity.id}.${ref.label} references missing entity: ${ref.id}`);
+      if (ref.kind && target.kind !== ref.kind) {
+        throw new Error(`${entity.id}.${ref.label} must reference ${ref.kind}, got ${target.kind}: ${target.id}`);
       }
     }
-    if (entity.kind === schema.context.kind) {
+    if (entity.kind === schema.context?.kind) {
       for (const key of contextKeys(entity, schema)) {
         if (contextOwners.has(key)) throw new Error(`context name or alias ${key} is used by ${contextOwners.get(key)} and ${entity.id}`);
         contextOwners.set(key, entity.id);
@@ -149,7 +171,7 @@ export function validateEntitySet(input, schema) {
     }
   }
   for (const entity of entities) {
-    if (entity.kind !== schema.context.kind && contextOwners.has(contextKey(entity.id))) {
+    if (entity.kind !== schema.context?.kind && contextOwners.has(contextKey(entity.id))) {
       throw new Error(`entity id ${entity.id} conflicts with context name or alias owned by ${contextOwners.get(contextKey(entity.id))}`);
     }
   }
@@ -207,7 +229,7 @@ export async function resolveEntitySummaries(kind, options = {}) {
   if (kind && !config.schema.kinds[kind]) throw new Error(`unsupported entity kind: ${kind}`);
   const context = await resolveContext(config.currentContext, config);
   return {
-    entities: await listEntitySummaries(config.database, config.schema, kind),
+    entities: await listEntitySummaries(config.database, config.schema, kind, options),
     current_context: context?.id || null,
   };
 }
@@ -215,17 +237,23 @@ export async function resolveEntitySummaries(kind, options = {}) {
 export async function resolveEntity(id, options = {}) {
   const config = resolverConfig(options);
   const entityId = requireId(id);
-  return await getEntity(entityId, config.database, config.schema) || resolveContext(entityId, config);
+  const exact = await getEntity(entityId, config.database, config.schema);
+  if (exact) return exact;
+  const matches = await lookupEntities(entityId, config.database, config.schema);
+  if (matches.length > 1) throw conflict(`ambiguous name ${entityId}; choose an id: ${matches.map((entity) => entity.id).join(", ")}`);
+  return matches[0] || null;
 }
 
 export async function resolveEntityPacket(id, options = {}) {
   const config = resolverConfig(options);
   const entity = await resolveEntity(id, config);
   if (!entity) return null;
-  const context = entity.kind === config.schema.context.kind
+  const member = config.schema.context && entity[config.schema.context.member_field];
+  const machine = Array.isArray(member) ? member.find((location) => location.host)?.host : member;
+  const context = entity.kind === config.schema.context?.kind
     ? entity
-    : entity[config.schema.context.member_field]
-      ? await getEntity(entity[config.schema.context.member_field], config.database, config.schema)
+    : machine
+      ? await resolveContext(machine, config)
       : null;
   const current = await resolveContext(config.currentContext, config);
   return entityPacket(entity, config.schema, current, context);
@@ -234,12 +262,11 @@ export async function resolveEntityPacket(id, options = {}) {
 export async function resolveCurrentContext(options = {}) {
   const config = resolverConfig(options);
   const context = await resolveContext(config.currentContext, config);
-  if (!context) return null;
-  const rootField = config.schema.context.root_field;
+  const rootField = config.schema.context?.root_field;
   return {
-    context: { id: context.id, ...(rootField && context[rootField] !== undefined ? { [rootField]: context[rootField] } : {}) },
-    packet: entityPacket(context, config.schema, context, context),
-    members: await listMemberSummaries(context.id, config.database, config.schema),
+    context: { id: context?.id || config.currentContext, ...(context && rootField && context[rootField] !== undefined ? { [rootField]: context[rootField] } : {}) },
+    packet: context ? entityPacket(context, config.schema, context, context) : null,
+    members: options.brief ? [] : await listMemberSummaries(context?.id || config.currentContext, config.database, config.schema, context ? contextKeys(context, config.schema) : []),
   };
 }
 
@@ -271,7 +298,7 @@ function sameEntity(left, right) {
 export async function createEntityRecord(id, payload = {}, options = {}) {
   const baseConfig = resolverConfig(options);
   const entityId = assertMatchingId(id, payload);
-  const entity = normalizeEntity({ ...payload, id: entityId }, baseConfig.schema);
+  const entity = await normalizeRecord({ ...payload, id: entityId }, baseConfig);
   return serializeMutation(() => withWriteTransaction(baseConfig.database, async (database) => {
     const config = { ...baseConfig, database };
     assertSchemaBinding(database, config.schema);
@@ -287,13 +314,13 @@ export async function updateEntityRecord(id, payload = {}, options = {}) {
   const baseConfig = resolverConfig(options);
   const entityId = assertMatchingId(id, payload);
   const expected = requireRevision(options.expectedUpdatedAt);
-  const entity = normalizeEntity({ ...payload, id: entityId }, baseConfig.schema);
   return serializeMutation(() => withWriteTransaction(baseConfig.database, async (database) => {
     const config = { ...baseConfig, database };
     assertSchemaBinding(database, config.schema);
     const existing = await getEntity(entityId, database, config.schema);
     if (!existing) throw conflict(`entity not found: ${entityId}`);
     assertRevision(existing, expected);
+    const entity = await normalizeRecord({ ...payload, id: entityId }, config, existing);
     if (sameEntity(existing, entity)) return existing;
     await validateReferences(entity, config);
     await validateLookupIdentity(entity, config);

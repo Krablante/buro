@@ -1,46 +1,54 @@
-# Interfaces
+# CLI, HTTP, and portability
 
 [English](interfaces.md) · [Русский](interfaces.ru.md) · [README](../README.md)
 
-The everyday CLI reads are `buro <id>`, `buro current`, `buro list [kind]`,
-and `buro schema [kind]`. An exact id wins over an alias. `current` resolves
-the configured context and lists records whose member reference points to it;
-it is a scoped view, not the whole registry. `buro --version` reports the
-installed package version. [Draft commands](draft-workflow.md) handle ordinary
-writes.
+`buro <id-or-name>` gets one record. `buro get <id-or-name>` also handles ids
+matching CLI commands. Exact ids win over names and aliases. An ambiguous name
+reports matching ids. `buro search <text>` searches ids, names, and aliases;
+`buro list [kind]` lists identities. Both default to 100 results and support
+`--limit 1..1000` and `--offset`. A full page prints a next-page hint.
 
-## HTTP for clients
+`buro types [kind]` inspects active definitions; `schema` is a compatible alias
+for inspection. `buro types copy <built-in> <file>` copies a built-in YAML.
+`buro current --brief` gets optional machine rules; `buro current` also returns
+up to 100 records with a location on that machine. A missing host record is a
+normal result. `init --dry-run` previews adoption; `init` applies it.
+`agent`, `agent --full`, and `connect` support [agent integration](agents.md).
+Ordinary writes use the [draft workflow](draft-workflow.md).
 
-Run `buro serve --host 127.0.0.1 --port 8765` on a central instance. The
-server uses the same resolver and database as the local CLI.
+## HTTP
+
+`buro serve --host 127.0.0.1 --port 8765` opens the applied local model.
 
 | Route | Meaning |
 | --- | --- |
-| `GET /health` | Database and active preset status |
-| `GET /schema` | Active preset for client-side draft validation |
-| `GET /entities` | All full entity JSON (export or administration) |
-| `GET /entities?summary=1&kind=host&current_context=worker` | Compact list and current-context id; `kind` is optional |
-| `GET /current?current_context=worker` | Context id/root, packet, and compact member list |
-| `GET /entities/:id` | One entity, resolving context aliases |
-| `POST /entities/:id` | Create an entity |
-| `PUT /entities/:id` | Update an entity with `If-Match` revision |
-| `DELETE /entities/:id` | Delete an entity with `If-Match` revision |
-| `GET /packet/entity/:id?current_context=worker` | Structured packet with guides |
+| `GET /health` | Database and applied model status |
+| `GET /schema` | Normalized active definitions, including per-kind fields |
+| `GET /entities` | All full records for explicit administration |
+| `GET /entities?summary=1&kind=project&q=site&limit=100&offset=0` | Identity page; kind and query are optional |
+| `GET /current?current_context=worker&brief=1` | Optional machine packet; brief skips member lookup |
+| `GET /entities/:id` | One record, with names and aliases supported |
+| `GET /packet/entity/:id?current_context=worker` | Structured packet |
+| `POST /entities/:id?current_context=worker` | Create; missing location host is the writing client |
+| `PUT /entities/:id?current_context=worker` | Replace with `If-Match` revision |
+| `DELETE /entities/:id` | Delete with `If-Match` revision |
 
-The client CLI renders packets locally from the structured response. Draft-only
-guidance does not appear in packets. An update or delete sends the revision
-from the starting entity in `If-Match`; stale revisions are rejected. Requests
-have a 1 MiB body limit. Client requests time out after three seconds without
-automatic retries. The built-in server has neither authentication nor TLS:
-bind to loopback or limit access to a trusted private network.
+`current_context` identifies the writing/reading machine, not a mandatory host
+record. Client CLI sends it on writes, so server-side defaults do not assign
+worker paths to the server. HTTP request bodies are limited to 1 MiB. Clients
+time out after three seconds without automatic retries. The server has no auth
+or TLS; use loopback, a trusted private network, or an access-controlled proxy.
 
-## Whole-registry portability
+## Export and restore
 
-`buro export <file>` writes a deterministic YAML manifest, mode `0600`, with
-the preset identity, model hash, records, and revisions. `buro import <file>
-[--adopt]` validates the full manifest and every declared reference, takes a
-backup of a nonempty target, and replaces the registry in one transaction.
-`--adopt` is needed when the manifest's preset identity or version differs.
-These commands require direct storage. Exports contain private instance
-facts; keep them in private state. Import is the deliberate path for recovery
-and model migration, not ordinary entity editing.
+`buro export <file>` creates a deterministic YAML manifest with mode 0600,
+records, revisions, and the applied model. Version 2 exports contain definitions
+without source-file paths. `buro import <file> [--adopt]` validates all records
+and references before replacing the registry in one transaction. A nonempty
+target is backed up. Version 1 exports remain supported, including recognized
+legacy migrations with `--adopt`.
+
+Select definitions matching the export when restoring a custom instance; its
+`model` object is also a valid full schema for `schema_path`. `--adopt` allows
+a different binding, not silent removal of incompatible fields. Import and
+export require local storage; worker clients do not copy the central database.

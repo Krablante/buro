@@ -1,0 +1,26 @@
+id: project
+label: A site, application, bot, library, or other development project.
+fields:
+  aliases: {type: string-list, section: identity, guide: Names used for this project in conversation.}
+  summary: {type: text, section: summary, guide: What the project does; omit unverified descriptions.}
+  locations:
+    type: record-list
+    section: location
+    guide: Known locations; each path belongs to its recorded machine.
+    fields:
+      host: {type: string}
+      path: {type: string}
+      url: {type: string}
+      purpose: {type: text}
+  repo: {type: string, section: repository, guide: Repository URL when known.}
+  read_first: {type: string-list, section: read_first, guide: Canonical entry documents; read only what the task needs.}
+  important: {type: string-list, section: important, guide: Confirmed facts and decisions that affect future work.}
+  avoid: {type: string-list, section: avoid, guide: Concrete restrictions; avoid generic warnings.}
+  related:
+    type: record-list
+    section: related
+    guide: Useful objects or resources and why they matter.
+    fields:
+      target: {type: string, required: true}
+      note: {type: text}
+  notes: {type: text, section: notes, guide: Other durable information; exclude session logs and speculation.}

@@ -38,14 +38,16 @@ function resolveFontsDir() {
 
 const translations = {
   en: {
-    name: "Workstation",
-    summary: "Primary workspace for Acme projects.",
+    name: "My website",
+    summary: "Personal website.",
+    important: "Ask me before publishing.",
     title: "reviewed facts, one draft",
     note: "real starter CLI · generated from source",
   },
   ru: {
-    name: "Рабочая станция",
-    summary: "Основное рабочее пространство проектов Acme.",
+    name: "Мой сайт",
+    summary: "Личный сайт.",
+    important: "Перед публикацией спросить меня.",
     title: "проверенные факты, один черновик",
     note: "реальный starter CLI · собрано из исходников",
   },
@@ -101,6 +103,7 @@ function replaceExactlyOnce(text, pattern, replacement, label) {
 
 function normalizePaths(text, env) {
   return String(text)
+    .replaceAll(env.BURO_CONFIG, "~/.config/buro/config.json")
     .replaceAll(env.BURO_ROOT, "~/.local/share/buro")
     .replaceAll(env.HOME, "~");
 }
@@ -115,62 +118,19 @@ function commandBlock(command, output) {
 
 function selectedDiff(output) {
   const lines = output.split("\n");
-  const active = lines.filter((line) => /^\+ (id|name|kind|root|summary):/.test(line));
+  const active = lines.filter((line) => /^\+ (id|name|kind|summary|important):|^\+   - /.test(line));
   const fromLabel = lines.find((line) => line.startsWith("--- "));
   const toLabel = lines.find((line) => line.startsWith("+++ "));
-  if (active.length !== 5) fail(`draft diff exposed ${active.length} expected demo fields instead of 5`);
+  if (active.length !== 6) fail(`draft diff exposed ${active.length} expected demo lines instead of 6`);
   if (!fromLabel || !toLabel) fail("draft diff no longer exposes its source and target labels");
   return [...lines.slice(0, 3), "", fromLabel, toLabel, "  …", ...active].join("\n");
 }
 
 function selectedDraft(draft, parsed) {
   const lines = draft.split("\n");
-  const location = lines.find((line) => line.startsWith("# LOCATION — "));
-  const root = lines.find((line) => line.startsWith("# root — "));
-  const summaryIndex = lines.findIndex((line) => line.startsWith("# SUMMARY — "));
-  const summary = lines.find((line) => line.startsWith("# summary — "));
-  const values = [location, root, summaryIndex >= 0 ? lines[summaryIndex] : null, summaryIndex >= 0 ? lines[summaryIndex + 1] : null, summary];
-  if (values.some((value) => !value)) fail("generated draft no longer exposes the expected section and field guidance");
-  return [
-    location,
-    root,
-    `root: ${parsed.root}`,
-    "",
-    lines[summaryIndex],
-    lines[summaryIndex + 1],
-    summary,
-    `summary: ${parsed.summary}`,
-  ].join("\n");
-}
-
-function selectedCurrent(output) {
-  const prefixes = [
-    "## BURO Current Context",
-    "context_root:",
-    "current_context:",
-    "BURO Entity:",
-    "Name:",
-    "Context:",
-    "LOCATION:",
-    "  # ",
-    "  root:",
-    "SUMMARY:",
-    "  summary:",
-    "[buro current entities]",
-    "No entities in the current context.",
-  ];
-  const lines = output.split("\n").filter((line) => prefixes.some((prefix) => line.startsWith(prefix)));
-  const expectedLines = 16;
-  if (lines.length !== expectedLines) fail(`buro current demo selection changed: expected ${expectedLines} lines, found ${lines.length}`);
-  return [
-    ...lines.slice(0, 3),
-    "",
-    ...lines.slice(3, 6),
-    "",
-    ...lines.slice(6, 14),
-    "",
-    ...lines.slice(14),
-  ].join("\n");
+  const guide = lines.find((line) => line.startsWith("# important — "));
+  if (!guide) fail("draft field guidance is missing");
+  return `${yaml.dump({ id: parsed.id, name: parsed.name, kind: parsed.kind, summary: parsed.summary }, { lineWidth: -1 }).trimEnd()}\n\n${guide}\n${yaml.dump({ important: parsed.important }, { lineWidth: -1 }).trimEnd()}`;
 }
 
 async function captureFlow(language, workDir) {
@@ -180,45 +140,44 @@ async function captureFlow(language, workDir) {
   const draftPath = path.join(instanceRoot, "BURO_DRAFT.yaml");
 
   const init = normalizePaths(runCli(["init"], env), env);
-  requireText(init, "Preset: starter v2", "buro init");
-  requireText(init, "Next: buro draft new workstation host", "buro init");
+  requireText(init, "Preset: starter v3", "buro init");
+  requireText(init, "no host record is required", "buro init");
 
-  const draftReady = normalizePaths(runCli(["draft", "new", "workstation", "host"], env), env);
-  requireText(draftReady, "mode: new host", "buro draft new");
-  requireText(draftReady, "id: workstation", "buro draft new");
+  const draftReady = normalizePaths(runCli(["draft", "new", "my-site", "project"], env), env);
+  requireText(draftReady, "mode: new project", "buro draft new");
+  requireText(draftReady, "id: my-site", "buro draft new");
 
   let draft = await readFile(draftPath, "utf8");
-  draft = replaceExactlyOnce(draft, /^name: workstation$/m, `name: ${copy.name}`, "name field");
-  draft = replaceExactlyOnce(draft, /^root:\s*$/m, "root: ~/workspace", "root field");
-  draft = replaceExactlyOnce(draft, /^summary:\s*$/m, `summary: ${copy.summary}`, "summary field");
+  draft = replaceExactlyOnce(draft, /^name: my-site$/m, `name: ${copy.name}`, "name field");
+  draft = replaceExactlyOnce(draft, /^# summary:\s*$/m, `summary: ${copy.summary}`, "summary field");
+  draft = replaceExactlyOnce(draft, /^# important: \[\]$/m, `important:\n  - ${copy.important}`, "important field");
   await writeFile(draftPath, draft, { encoding: "utf8", mode: 0o600 });
 
   const parsedDraft = yaml.load(draft);
   const draftExcerpt = selectedDraft(draft, parsedDraft);
 
   const diff = normalizePaths(runCli(["draft", "diff"], env), env);
-  requireText(diff, "+ root: ~/workspace", "buro draft diff");
+  requireText(diff, `+   - ${copy.important}`, "buro draft diff");
   requireText(diff, `+ summary: ${copy.summary}`, "buro draft diff");
 
   const pushed = normalizePaths(runCli(["draft", "push"], env), env);
   requireText(pushed, "action: created", "buro draft push");
 
-  const current = normalizePaths(runCli(["current"], env), env);
-  requireText(current, "BURO Entity: host:workstation", "buro current");
-  requireText(current, "Context: workstation (current)", "buro current");
-  requireText(current, "# Where the entity lives and which host owns it.", "buro current");
-  requireText(current, `summary: ${copy.summary}`, "buro current");
+  const current = normalizePaths(runCli(["my-site"], env), env);
+  requireText(current, "BURO Entity: project:my-site", "buro my-site");
+  requireText(current, `summary: ${copy.summary}`, "buro my-site");
+  requireText(current, copy.important, "buro my-site");
 
-  const listed = runCli(["list", "host"], env);
-  requireText(listed, `host\tworkstation\t${copy.name} [CURRENT]`, "buro list host");
+  const listed = runCli(["list", "project"], env);
+  requireText(listed, `project\tmy-site\t${copy.name}`, "buro list project");
 
   return [
     { start: 0, end: 3.2, text: commandBlock("buro init", init) },
-    { start: 3.2, end: 7, text: commandBlock("buro draft new workstation host", draftReady) },
+    { start: 3.2, end: 7, text: commandBlock("buro draft new my-site project", draftReady) },
     { start: 7, end: 11.5, text: commandBlock("$EDITOR ~/.local/share/buro/BURO_DRAFT.yaml", draftExcerpt) },
     { start: 11.5, end: 16, text: commandBlock("buro draft diff", selectedDiff(diff)) },
     { start: 16, end: 19.5, text: commandBlock("buro draft push", pushed) },
-    { start: 19.5, end: DURATION, text: commandBlock("buro current", selectedCurrent(current)) },
+    { start: 19.5, end: DURATION, text: commandBlock("buro my-site", current) },
   ];
 }
 

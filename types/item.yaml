@@ -1,0 +1,25 @@
+id: item
+label: Any useful object that does not need a more specific type.
+fields:
+  aliases: {type: string-list, section: identity, guide: Names used for this object.}
+  summary: {type: text, section: summary, guide: What the object is.}
+  locations:
+    type: record-list
+    section: location
+    guide: Known file or web locations.
+    fields:
+      host: {type: string}
+      path: {type: string}
+      url: {type: string}
+      purpose: {type: text}
+  read_first: {type: string-list, section: read_first, guide: Useful starting documents.}
+  important: {type: string-list, section: important, guide: Confirmed information useful in future work.}
+  avoid: {type: string-list, section: avoid, guide: Concrete restrictions.}
+  related:
+    type: record-list
+    section: related
+    guide: Useful relationships.
+    fields:
+      target: {type: string, required: true}
+      note: {type: text}
+  notes: {type: text, section: notes, guide: Other durable information.}

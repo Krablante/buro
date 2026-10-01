@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import yaml from "js-yaml";
 
-import { kindFields, newEntity, normalizeEntity } from "./schema.js";
+import { fieldDefinition, kindFields, newEntity, normalizeEntity } from "./schema.js";
 
 export const DRAFT_FILE_NAME = "BURO_DRAFT.yaml";
 const META_KEY = "__buro";
@@ -59,6 +59,9 @@ function valuePresent(value) {
 }
 
 function nestedToYaml(name, value, field, indent = "") {
+  if (["record", "record-list", "string-list"].includes(field.type)) {
+    return yaml.dump({ [name]: value }, { noRefs: true, lineWidth: -1 }).trimEnd().split("\n").map((line) => `${indent}${line}`);
+  }
   if (field.type === "text" && String(value).includes("\n")) {
     const [indicator, ...lines] = yaml.dump(value, { lineWidth: -1 }).trimEnd().split("\n");
     return [`${indent}${name}: ${indicator}`, ...lines.map((line) => `${indent}  ${line}`)];
@@ -149,7 +152,7 @@ function sectionGuideToYaml(name, schema) {
 function orderedSections(entity, schema) {
   const sections = [];
   for (const fieldName of kindFields(schema, entity.kind)) {
-    const sectionName = schema.fields[fieldName].section || "facts";
+    const sectionName = fieldDefinition(schema, entity.kind, fieldName).section || "facts";
     let section = sections.find((entry) => entry.name === sectionName);
     if (!section) {
       section = { name: sectionName, fields: [] };
@@ -186,7 +189,7 @@ export function entityToDraftYaml(entity = {}, schema, options = {}) {
     lines.push("", ...sectionGuideToYaml(section.name, schema));
     let optionalOpen = false;
     for (const fieldName of section.fields) {
-      const field = schema.fields[fieldName];
+      const field = fieldDefinition(schema, entity.kind, fieldName);
       const value = normalized[fieldName];
       if (!valuePresent(value) && field.draft_optional === false) continue;
       if (valuePresent(value)) {

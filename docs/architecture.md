@@ -2,39 +2,42 @@
 
 [English](architecture.md) · [Русский](architecture.ru.md) · [README](../README.md)
 
-BURO has one active preset and one SQLite database per local or central
-instance. The CLI handles commands and the local YAML draft. The resolver
-handles entity lookup, validation, rendering, revisions, and mutations. The
-HTTP API calls the resolver; client mode uses that API and holds no database
-copy. The preset defines vocabulary and presentation. SQLite stores the
-instance's records.
+CLI and HTTP use the same resolver for lookup, validation, rendering, revisions,
+and changes. The CLI manages the local YAML draft. Local mode opens SQLite;
+client mode uses HTTP and stores only its configuration and draft. A server is
+optional. Agent connections supply instructions; no model or disk indexer runs
+inside BURO.
 
 ```text
-CLI / draft ─┐
-             ├─ resolver ─ schema + packets ─ SQLite
-HTTP API ────┘                         └────── backups before writes
-                                  ↑
-                            active preset
+CLI / local draft ─┐
+                  ├─ resolver ─ selected type definitions ─ SQLite
+HTTP clients ─────┘                                └────── pre-write backups
 ```
 
-An entity is one row: `id`, `name`, `kind`, `updated_at`, and a validated JSON
-object for preset fields. Identity and kind remain directly queryable without
-creating a database table for every vocabulary. The database binding includes
-the preset id, version, and a SHA-256 hash of its data contract. Human guide
-wording is outside that hash. A version or model change requires explicit
-adoption through `buro init` or a whole-registry import.
+One record is one row: id, name, kind, revision, and validated JSON content.
+There is no table per type. Independent YAML type definitions compile into the
+same normalized model as legacy full presets. Field and section guides do not
+affect the data contract hash. The last applied model is stored in metadata so
+adoption and exports can interpret existing records without losing fields.
 
-Every mutation takes a SQLite `BEGIN IMMEDIATE` write lock, checks revisions
-and declared references, makes a consistent pre-write backup, then changes
-the row. The process also serializes its own mutations; SQLite coordinates
-other processes. Failed checks leave the draft for correction. Import checks
-the complete new entity set before replacing all rows in one transaction.
+Names and aliases use an indexed lookup table. Machine membership uses an
+indexed location table. Both are derived from canonical rows and updated in the
+same write transaction; they are not separately editable facts. Exact-id reads
+do not scan the registry. List and search return identity columns with bounded
+pages. Machine member lists show at most 100 records; brief context omits them.
+Substring search can scan lookup keys; BURO does not claim semantic retrieval.
 
-The hot read paths are narrower than a registry export. A direct entity
-lookup reads one row plus context records for aliases; `buro list` reads only
-identity columns; `buro current` reads the context and member summaries.
-Member selection still scans stored JSON fields because the member field is
-chosen by the preset. Full entity enumeration is reserved for export and
-explicit `/entities` reads. Backups copy the database on each mutation, so
-write cost grows with database size; this favors reviewed, relatively
-infrequent fact changes over high-rate event storage.
+Changes take a SQLite write lock, check the starting revision and references,
+create a consistent pre-write backup, and update the canonical row and indexes.
+The process serializes mutations; SQLite coordinates other processes. Nested
+declared references are checked too. Failed writes preserve the draft.
+
+`init` validates a proposed model before adoption. Known old models migrate
+host/path to locations; incompatible custom changes fail before writes. Changed
+records receive new revisions. A preview runs validation without modifying the
+database. Server startup verifies the applied binding without rebuilding all
+indexes on every restart.
+
+Full enumeration is used for export, explicit administration, schema adoption,
+and deletion reference checks. Backups copy SQLite before mutations, so frequent writes to a large
+registry have real I/O cost. BURO is intended for durable facts, not event logs.

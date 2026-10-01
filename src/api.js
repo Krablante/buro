@@ -104,7 +104,7 @@ export function createApiServer(options = {}) {
           methodNotAllowed(response);
           return;
         }
-        const current = await resolveCurrentContext({ ...config, currentContext });
+        const current = await resolveCurrentContext({ ...config, currentContext, brief: url.searchParams.get("brief") === "1" });
         if (!current) {
           notFound(response, `current context not found: ${currentContext}`);
           return;
@@ -119,7 +119,10 @@ export function createApiServer(options = {}) {
           return;
         }
         if (url.searchParams.get("summary") === "1") {
-          sendJson(response, 200, await resolveEntitySummaries(url.searchParams.get("kind"), { ...config, currentContext }));
+          const limit = Number(url.searchParams.get("limit") ?? 100);
+          const offset = Number(url.searchParams.get("offset") ?? 0);
+          if (!Number.isInteger(limit) || limit < 1 || limit > 1000 || !Number.isInteger(offset) || offset < 0) throw httpError("limit must be 1..1000; offset must be nonnegative", 400);
+          sendJson(response, 200, await resolveEntitySummaries(url.searchParams.get("kind"), { ...config, currentContext, limit, offset, query: url.searchParams.get("q") }));
         } else {
           sendJson(response, 200, { entities: await resolveEntities(config) });
         }
@@ -129,7 +132,7 @@ export function createApiServer(options = {}) {
       if (path.startsWith("/entities/")) {
         const entityId = decodeURIComponent(path.slice("/entities/".length));
         if (request.method === "POST") {
-          const entity = await createEntityRecord(entityId, await readJsonBody(request), config);
+          const entity = await createEntityRecord(entityId, await readJsonBody(request), { ...config, currentContext });
           if (!entity) {
             sendJson(response, 409, { ok: false, error: `entity already exists: ${entityId}` });
             return;
@@ -140,6 +143,7 @@ export function createApiServer(options = {}) {
         if (request.method === "PUT") {
           const entity = await updateEntityRecord(entityId, await readJsonBody(request), {
             ...config,
+            currentContext,
             expectedUpdatedAt: requestRevision(request),
           });
           if (!entity) {
@@ -200,7 +204,7 @@ export function createApiServer(options = {}) {
 export async function serve(options = {}) {
   const config = loadConfig();
   const databasePath = options.databasePath || config.databasePath;
-  const schema = options.schema || loadSchema(options.schemaPath || config.schemaPath);
+  const schema = options.schema || loadSchema({ ...config, ...options });
   await initDb(databasePath, schema);
   const database = openDatabase(databasePath);
   const server = createApiServer({

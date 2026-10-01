@@ -47,7 +47,7 @@ export function loadConfig() {
       || fileConfig.current_context
       || detectedContext(),
   );
-  const mode = String(process.env.BURO_MODE || fileConfig.mode || (process.env.BURO_API_URL ? "client" : "local"))
+  const mode = String(process.env.BURO_MODE || fileConfig.mode || (process.env.BURO_API_URL || fileConfig.api_url ? "client" : "local"))
     .trim()
     .toLowerCase();
   if (!new Set(["local", "central", "client"]).has(mode)) throw new Error(`unsupported BURO mode: ${mode}`);
@@ -78,6 +78,10 @@ export function loadConfig() {
   const schemaPath = path.resolve(
     process.env.BURO_SCHEMA_PATH || fileConfig.schema_path || bundledPresetPath(preset),
   );
+  const typeFiles = fileConfig.type_files;
+  if (typeFiles !== undefined && (!Array.isArray(typeFiles) || !typeFiles.length || typeFiles.some((value) => typeof value !== "string" || !value.trim()))) {
+    throw new Error("type_files must be a non-empty list of built-in names or YAML paths");
+  }
   const draftPath = path.resolve(
     process.env.BURO_DRAFT_PATH || fileConfig.draft_path || path.join(instanceRoot, "BURO_DRAFT.yaml"),
   );
@@ -95,6 +99,9 @@ export function loadConfig() {
     backupRetention,
     preset,
     schemaPath,
+    typeFiles: typeFiles?.map((value) => value.endsWith(".yaml") || value.endsWith(".yml")
+      ? path.resolve(path.dirname(configPath()), value) : value),
+    defaultKind: fileConfig.default_kind,
     draftPath,
   };
 }

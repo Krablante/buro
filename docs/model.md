@@ -1,99 +1,93 @@
-# Entity model and presets
+# Types and saved records
 
 [English](model.md) · [Русский](model.ru.md) · [README](../README.md)
 
-An entity has a stable `id`, a human `name`, a preset-defined `kind`, and a
-revision (`updated_at`). The remaining fields belong to that kind. Use
-`buro schema` to see the active preset and `buro schema <kind>` to see its
-fields and guidance. `buro list [kind]` discovers identifiers; `buro <id>`
-renders a packet.
+A record has `id`, `name`, `kind`, and a revision `updated_at`. The revision is
+managed by BURO. Content fields belong to the selected type definition. Missing
+fields stay missing; empty lists are not rendered. There is no mandatory host,
+workspace root, description, or current-context record.
 
-The preset defines the vocabulary, field order, section guides, and the
-relationship between a current context (usually a host) and its members.
-It contains **structure**, never an instance's private records. The bundled
-[`starter`](../presets/starter.yaml) defines host, project, service, and
-document; [`politia`](../presets/politia.yaml) is a larger production
-vocabulary. Choose one with `preset` / `BURO_PRESET`, or set `schema_path` /
-`BURO_SCHEMA_PATH` to your own YAML file.
+The defaults are `project`, `service`, `host`, and `item`. Inspect them with
+`buro types` and `buro types project`. Each definition is one YAML file under
+`types/`, containing `id`, an optional `label`, and a `fields` object. Field
+order is output order. `section` groups output; `guide` explains the field to
+people and agents. Fields are optional unless marked `required: true`.
 
-## A custom vocabulary
-
-This example uses workspaces and notes. Save it outside the installed package,
-point `schema_path` at it, then run `buro init` in local or central mode.
+## Custom definitions
 
 ```yaml
-id: notes
-version: 1
-default_kind: note
-
-context:
-  kind: workspace
-  alias_field: aliases
-  member_field: workspace
-  root_field: root
-
-sections:
-  summary:
-    guide: A short verified description of the item.
-    draft_guide: Describe the item itself, not today's task.
-  details:
-    guide: Useful details about the item.
-
-kinds:
-  note:
-    fields: [workspace, summary, tags]
-  workspace:
-    fields: [aliases, root, summary]
-
+id: project
+label: My project records
 fields:
-  workspace:
-    type: ref
-    target_kind: workspace
-    section: location
-  aliases:
+  important:
     type: string-list
-    section: identity
-  root:
-    type: string
-    section: location
-    required: true
-  summary:
-    type: text
-    section: summary
-    required: true
-  tags:
-    type: string-list
-    section: details
+    guide: Confirmed rules that affect future work.
 ```
 
-The engine supports `string`, `text`, `boolean`, `integer`, `number`, `ref`,
-`string-list`, `record`, and `record-list`. Nested records declare their own
-finite fields. Unknown fields and invalid values fail validation. Top-level
-references with `target_kind` must point to a record of that kind. String
-paths and URLs are stored as facts; BURO does not check external resources.
+This is a complete valid definition, including when it is the only active
+type. Save it outside the installed package and select it in config.json:
 
-`sections.<name>.guide` appears with a populated section in packets and
-drafts; `draft_guide` appears only in drafts. A field's `guide` appears in
-packets, help, schema output, and drafts. `packet: false` keeps a field out of
-rendered packets while retaining it in entity JSON. `draft_optional: false`
-hides an absent optional field from drafts. Guides are one line and are never
-stored as entity data.
+```json
+{
+  "type_files": ["/path/to/project.yaml", "service", "host", "item"]
+}
+```
 
-Preset definitions are checked when loaded: unknown options, broken field
-sets, invalid defaults, context fields, and reference targets are rejected.
-The preset cannot run code or SQL. Context identifiers and aliases match
-case-insensitively; dots and colons remain significant. Ambiguous context
-names are rejected.
+Built-in names resolve inside the package; relative YAML paths resolve from the
+configuration file's directory. `buro types copy project <file>` copies the
+built-in definition without overwriting an existing file. A new `id` creates
+your own type. One definition per id is allowed. There is no inheritance or
+field merging across types. Fields with the same name may have different
+definitions in different types. `default_kind` in config selects the default;
+otherwise it is project when present, or the first selected type.
 
-## Changing a live model
+HTTP clients receive active definitions from the registry server. Change and
+apply definitions on that server; a client-side type_files setting does not
+replace the shared model.
 
-SQLite binds to the preset id, version, and model hash. Guide wording is
-excluded from the hash; editing it leaves existing data usable. When the
-contract or meaning changes, increase `version`. `buro init` backs up the
-database and validates every stored entity before adopting a compatible
-version. A changed model hash at the same version is refused.
+Supported field formats: `string`, `text`, `boolean`, `integer`, `number`,
+`ref`, `string-list`, `record`, `record-list`. Records declare nested fields.
+`ref` values point to existing ids and can constrain `target_kind`. A string
+target in `related` can also describe a path or URL without creating a record.
+Unknown fields and invalid values are rejected. `packet: false` hides a field
+from packets; `draft_optional: false` omits absent optional fields from drafts.
+Neither setting deletes data. Definitions cannot execute code or SQL.
 
-For an incompatible change, [export the complete registry](interfaces.md)
-under the old preset, transform the manifest outside BURO, then import under
-the new preset with `--adopt`. Import checks all records and references before
-replacing the registry.
+Standard `locations` records have optional `host`, `path`, `url`, and `purpose`.
+New paths must be absolute; a missing host gets the client's current machine
+on a normal write and is shown in the diff. No host record is required. Keep
+machine names unique, or configure `current_context` explicitly. Unknown
+ownership in legacy data is preserved rather than guessed during migration
+or a later unrelated edit. Supply its host when ownership becomes known.
+An unchanged relative legacy location also survives unrelated edits; resolve
+it to an absolute path when changing that location.
+Host records can hold existing folder conventions; particular objects can
+describe their exceptions. No layout is inferred from a type name.
+
+## Applying a changed definition
+
+Run `buro init --dry-run`, then `buro init`. BURO validates all stored records
+and references before applying the model. Compatible changes do not require a
+handwritten migration or global version increment. Changed guides do not affect
+the data hash. Removing a populated field, removing a used type, or changing a
+format to something incompatible rejects adoption and preserves the database.
+Restore the definition or explicitly transform a whole-registry export and
+import it with `--adopt`. Schema adoption should be done without active drafts;
+changed records receive new revisions, so old drafts cannot overwrite them.
+
+The database stores the applied definition for migration and recovery, not a
+second editable configuration. Normal reads refuse an unapplied model. Exports
+include the applied model and records; keep custom definition files backed up.
+
+## Upgrading v1
+
+The known starter v2 and Politia v5 models are bundled under `presets/legacy/`
+only to recognize exact historical bindings. `buro init` converts non-host
+`host/path` fields to `locations` and starter `document` records to `item`.
+Other fields and ids are preserved. A pre-write SQLite snapshot is created;
+previewing does not write or take a snapshot. Version 1 exports remain readable
+and migrate with `buro import <file> --adopt` when a known old model is recognized.
+
+Legacy full-model YAML files selected through `preset` or `schema_path` remain
+supported, including optional context and field sets. Politia uses that format
+for its existing specialized vocabulary. It is not required for public setup.

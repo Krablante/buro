@@ -3,18 +3,24 @@ import path from "node:path";
 import yaml from "js-yaml";
 
 import { replaceRegistryRecords, validateEntitySet } from "./resolver.js";
+import { loadSchema, normalizeSchema } from "./schema.js";
+import { migrateEntities } from "./migration.js";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const FORMAT = "buro-registry";
-const FORMAT_VERSION = 1;
+const FORMAT_VERSION = 2;
 
 function plainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function manifestFor(entities, schema) {
+  const { source: _source, hash: _hash, core_fields: _coreFields, ...model } = schema;
   return {
     format: FORMAT,
     version: FORMAT_VERSION,
+    model,
     preset: {
       id: schema.id,
       version: schema.version,
@@ -47,9 +53,9 @@ export async function readRegistryManifest(filePath, schema, options = {}) {
   const source = path.resolve(filePath);
   const manifest = yaml.load(await readFile(source, "utf8"));
   if (!plainObject(manifest)) throw new Error("registry export must be a YAML object");
-  const unknown = Object.keys(manifest).filter((key) => !["format", "version", "preset", "exported_at", "entities"].includes(key));
+  const unknown = Object.keys(manifest).filter((key) => !["format", "version", "model", "preset", "exported_at", "entities"].includes(key));
   if (unknown.length) throw new Error(`registry export contains unknown fields: ${unknown.join(", ")}`);
-  if (manifest.format !== FORMAT || manifest.version !== FORMAT_VERSION) {
+  if (manifest.format !== FORMAT || ![1, FORMAT_VERSION].includes(manifest.version)) {
     throw new Error(`unsupported registry export format: ${manifest.format || "unknown"} v${manifest.version || "unknown"}`);
   }
   if (!plainObject(manifest.preset)) throw new Error("registry export preset metadata is required");
@@ -65,7 +71,15 @@ export async function readRegistryManifest(filePath, schema, options = {}) {
     throw new Error(`registry export uses ${manifest.preset.id} v${manifest.preset.version}; active preset is ${schema.id} v${schema.version}`);
   }
   if (!Array.isArray(manifest.entities)) throw new Error("registry export entities must be a list");
-  return { source, manifest, presetMatches, entities: validateEntitySet(manifest.entities, schema) };
+  let previous = manifest.model ? normalizeSchema(manifest.model, "registry export") : null;
+  if (!previous && ["starter", "politia"].includes(manifest.preset.id)) {
+    const legacyFile = new URL(`../presets/legacy/${manifest.preset.id}-v${manifest.preset.version}.yaml`, import.meta.url);
+    if (existsSync(legacyFile)) previous = loadSchema(fileURLToPath(legacyFile));
+  }
+  if (previous && previous.hash !== manifest.preset.hash) throw new Error("export model does not match its declared hash");
+  const result = presetMatches ? { entities: validateEntitySet(manifest.entities, schema) }
+    : migrateEntities(manifest.entities, { preset: manifest.preset.id }, previous, schema);
+  return { source, manifest, presetMatches, ...result };
 }
 
 export async function importRegistry(filePath, options) {

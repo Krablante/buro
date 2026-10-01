@@ -14,11 +14,11 @@ fi
 
 discover_workers() {
   command -v buro >/dev/null 2>&1 || return 0
-  while read -r _ host _; do
-    if [ -n "$host" ] && [ "$host" != "$BURO_SERVER_HOST" ]; then
+  while read -r kind host _; do
+    if [ "$kind" = "host" ] && [ -n "$host" ] && [ "$host" != "$BURO_SERVER_HOST" ]; then
       printf '%s ' "$host"
     fi
-  done < <(buro list host)
+  done < <(buro list host --limit 1000)
 }
 
 BURO_WORKER_HOSTS=${BURO_WORKER_HOSTS:-$(discover_workers)}
@@ -31,6 +31,11 @@ unavailable_workers=()
 failed_workers=()
 api_stopped=0
 tarball=""
+rollback_dir=""
+previous_package=""
+previous_snapshot=""
+database_path=""
+central_pending=0
 
 restore_api() {
   if [ "$api_stopped" -eq 1 ] && [ "$dry_run" -eq 0 ]; then
@@ -39,10 +44,17 @@ restore_api() {
 }
 
 finish() {
-  restore_api
-  if [ "$dry_run" -eq 0 ] && [ -n "$tarball" ]; then
-    rm -f "$tarball"
+  local status=$?
+  if [ "$status" -ne 0 ] && [ "$central_pending" -eq 1 ] && [ -n "$previous_package" ]; then
+    printf 'Central upgrade failed; restoring the previous package and SQLite snapshot.\n' >&2
+    systemctl --user stop buro-api.service || true
+    sudo -n env "PATH=$sudo_node_path" npm install -g "$previous_package" --prefix /usr/local || true
+    if [ -n "$previous_snapshot" ]; then cp "$previous_snapshot" "$database_path"; fi
+    if [ -f "$rollback_dir/config.json" ]; then cp "$rollback_dir/config.json" "$HOME/.config/buro/config.json"; fi
+    api_stopped=1
   fi
+  restore_api
+  if [ "$dry_run" -eq 0 ] && [ -n "$tarball" ]; then printf 'Package retained: %s\n' "$tarball"; fi
 }
 
 trap finish EXIT
@@ -127,6 +139,20 @@ if [ "$dry_run" -eq 0 ]; then
   require_file "$tarball"
 fi
 
+log "preview central migration before installing"
+run env BURO_MODE=local BURO_PRESET=politia "BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST" node src/cli.js init --dry-run
+if [ "$dry_run" -eq 0 ] && [ "$restart_api" -eq 1 ]; then
+  rollback_dir=$(mktemp -d "$PACK_DIR/buro-upgrade.XXXXXX")
+  cp "$HOME/.config/buro/config.json" "$rollback_dir/config.json"
+  database_path=$(node --input-type=module -e 'import {loadConfig} from "./src/config.js"; console.log(loadConfig().databasePath)')
+  systemctl --user stop buro-api.service
+  api_stopped=1
+  previous_snapshot=$(buro backup | sed -n 's/^BURO backup created: //p')
+  previous_name=$(npm pack /usr/local/lib/node_modules/buro --pack-destination "$rollback_dir" --quiet)
+  previous_package="$rollback_dir/$previous_name"
+  central_pending=1
+fi
+
 log "install on central live runtime"
 central_config=$(printf '{"mode":"central","preset":"politia","current_context":"%s","central_host":"%s","api_url":"http://127.0.0.1:%s","instance_root":"%s"}' \
   "$BURO_SERVER_HOST" "$BURO_SERVER_HOST" "$BURO_API_PORT" "$BURO_INSTANCE_ROOT")
@@ -142,6 +168,8 @@ if [ "$restart_api" -eq 1 ]; then
   run systemctl --user restart buro-api.service
   api_stopped=0
   run systemctl --user is-active buro-api.service
+  run curl -fsS --retry 5 --retry-connrefused --retry-delay 1 --max-time 3 "http://127.0.0.1:$BURO_API_PORT/health"
+  central_pending=0
 fi
 
 if [ "$sync_workers" -eq 1 ]; then

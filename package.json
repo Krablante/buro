@@ -1,6 +1,6 @@
 {
   "name": "buro",
-  "version": "1.1.1",
+  "version": "2.0.0",
   "description": "Typed context registry for people and agents, with SQLite storage and reviewed YAML drafts.",
   "license": "MIT",
   "keywords": [
@@ -33,6 +33,9 @@
   "files": [
     "src/",
     "presets/",
+    "types/",
+    "skills/",
+    "integrations/",
     "scripts/",
     "docs/",
     "assets/",
@@ -47,6 +50,6 @@
     "deploy:live": "bash scripts/deploy-live.sh"
   },
   "dependencies": {
-    "js-yaml": "^4.3.0"
+    "js-yaml": "^4.3.2"
   }
 }

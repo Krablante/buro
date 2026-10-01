@@ -1,12 +1,12 @@
 function fieldGuideText(schema) {
   return schema.kinds[schema.default_kind].fields
-    .filter((field) => schema.fields[field].guide)
-    .map((field) => `  - ${field}: ${schema.fields[field].guide}.`)
+    .filter((field) => fieldDefinition(schema, schema.default_kind, field).guide)
+    .map((field) => `  - ${field}: ${fieldDefinition(schema, schema.default_kind, field).guide}`)
     .join("\n");
 }
 
 function kindSectionNames(schema, kind) {
-  return [...new Set(schema.kinds[kind].fields.map((field) => schema.fields[field].section || "facts"))];
+  return [...new Set(schema.kinds[kind].fields.map((field) => fieldDefinition(schema, kind, field).section || "facts"))];
 }
 
 function sectionGuideLines(schema, kind, indent = "  ") {
@@ -18,12 +18,18 @@ function sectionGuideLines(schema, kind, indent = "  ") {
 export function renderUsage(schema) {
   const sections = sectionGuideLines(schema, schema.default_kind);
   return [
-    "BURO keeps typed, moderated agent context in one SQLite registry.",
+    "BURO keeps durable work context in one SQLite registry, using configurable record types.",
     "",
     "Usage:",
+    "  buro init [--dry-run]",
+    "  buro connect <opencodez|opencode|codex|claude|file> [--path <file>]",
+    "  buro agent",
+    "  buro types [<kind>|copy <kind> <file>]",
     "  buro <id>",
-    "  buro current",
-    "  buro list [kind]",
+    "  buro get <id-or-name>  # also works for ids matching command names",
+    "  buro current [--brief]",
+    "  buro list [kind] [--limit <n>] [--offset <n>]",
+    "  buro search <text> [--limit <n>] [--offset <n>]",
     "  buro schema",
     "  buro schema <kind>",
     "  buro draft pull <id>",
@@ -38,10 +44,15 @@ export function renderUsage(schema) {
     "  buro help",
     "",
     "Commands:",
+    "  init          Validate and apply definitions; --dry-run previews without writing.",
+    "  connect       Install instructions and a skill for your agent.",
+    "  agent         Print the universal agent contract; --full prints its workflow.",
+    "  types         Show record types or copy a built-in definition to a YAML file.",
+    "  search        Find identities by text without loading full records.",
     "  <id>          Render one entity.",
     "  current       Render current-context information for agent prompts.",
     "  list [kind]   List all entities, optionally filtered by kind.",
-    "  schema        Show the active preset; add a kind for its section and field guide.",
+    "  schema        Inspect the normalized model; add a kind for its field guide.",
     "  draft         Review and apply the one local YAML draft.",
     "  export        Write a complete portable registry manifest.",
     "  import        Validate and atomically replace from a manifest.",
@@ -66,7 +77,7 @@ export function renderSchemaSummary(schema) {
     `BURO schema: ${schema.id} v${schema.version}`,
     `source: ${schema.source}`,
     `default kind: ${schema.default_kind}`,
-    `context kind: ${schema.context.kind}`,
+    `context kind: ${schema.context?.kind || "none (optional)"}`,
     "kinds:",
     ...Object.keys(schema.kinds).map((kind) => `- ${kind}`),
   ].join("\n")}\n`;
@@ -77,7 +88,8 @@ export function renderKindSchema(schema, kind) {
   if (!definition) throw new Error(`unsupported entity kind: ${kind}`);
   const sections = sectionGuideLines(schema, kind, "");
   const lines = [
-    `BURO kind: ${kind}`,
+    `BURO type: ${kind}`,
+    ...(definition.label ? [`purpose: ${definition.label}`] : []),
     `preset: ${schema.id} v${schema.version}`,
     ...(sections.length ? ["sections:", ...sections] : []),
     "fields:",
@@ -86,7 +98,7 @@ export function renderKindSchema(schema, kind) {
     "- kind (string, required): entity kind",
   ];
   for (const name of definition.fields) {
-    const field = schema.fields[name];
+    const field = fieldDefinition(schema, kind, name);
     lines.push(`- ${name} (${field.type}${field.required ? ", required" : ""}): ${field.guide || "no guide"}`);
   }
   return `${lines.join("\n")}\n`;
@@ -101,7 +113,7 @@ export function renderEntityListLine(entity, currentContext) {
   return `${entity.kind}\t${entity.id}\t${entity.name}${marker}`;
 }
 
-export function renderCurrentContext({ currentContext, home, contextRoot, packetText, members }) {
+export function renderCurrentContext({ currentContext, home, contextRoot, packetText, members, brief }) {
   const lines = [
     "## BURO Current Context",
     "",
@@ -112,9 +124,9 @@ export function renderCurrentContext({ currentContext, home, contextRoot, packet
     "",
     "[buro current context]",
     packetText.trimEnd(),
-    "",
-    "[buro current entities]",
-    ...(members.length ? members.map((entity) => renderEntityListLine(entity, currentContext)) : ["No entities in the current context."]),
+    ...(!brief ? ["", "[buro current entities]",
+      ...(members.length ? members.map((entity) => renderEntityListLine(entity, currentContext)) : ["No entities in the current context."]),
+      ...(members.length === 100 ? ["First 100 records; use buro search to narrow the lookup."] : [])] : []),
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -138,3 +150,4 @@ export function renderDraftPushResult({ action, id, filePath }) {
 export function renderDraftClearResult({ filePath }) {
   return `BURO draft cleared\nfile: ${filePath}\n`;
 }
+import { fieldDefinition } from "./schema.js";

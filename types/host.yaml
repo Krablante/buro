@@ -1,0 +1,11 @@
+id: host
+label: A computer or server; creating a host record is optional.
+fields:
+  aliases: {type: string-list, section: identity, guide: Alternate machine names.}
+  summary: {type: text, section: summary, guide: What this machine is used for.}
+  address: {type: string, section: connection, guide: Known network address.}
+  ssh_target: {type: string, section: connection, guide: SSH target when available.}
+  root: {type: string, section: location, guide: Shared workspace root only when one actually exists.}
+  important: {type: string-list, section: important, guide: Machine-wide operating rules including any folder conventions.}
+  avoid: {type: string-list, section: avoid, guide: Concrete machine-wide restrictions.}
+  notes: {type: text, section: notes, guide: Other durable machine information.}

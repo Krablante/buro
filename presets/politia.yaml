@@ -1,175 +1,87 @@
 id: politia
-version: 5
+version: 6
 default_kind: project
-
 context:
   kind: host
   alias_field: lan_names
-  member_field: host
+  member_field: locations
   root_field: politia_root
-
-sections:
-  identity:
-    guide: Names and classifications that identify the Politia entity.
-  location:
-    guide: Verified host ownership and filesystem location of the entity.
-  repository:
-    guide: Source repositories and the Git identity used to maintain them.
-  summary:
-    guide: A short verified explanation of what the entity is and why it exists.
-    draft_guide: Describe the entity itself, not the current task, status update, or aspiration.
-  read_first:
-    guide: Canonical documents to read before working on the entity.
-    draft_guide: List only authoritative starting points, in useful reading order.
-  important:
-    guide: Important rules that must be remembered while working with the entity.
-    draft_guide: Add only rules that materially affect how work must be performed.
-  avoid:
-    guide: Actions and assumptions that are unsafe or forbidden for the entity.
-    draft_guide: State concrete prohibitions or unsafe assumptions, not generic cautions.
-  related:
-    guide: Related paths, entities, or resources that provide useful operational context.
-    draft_guide: Include only useful relationships and explain why each one matters.
-  use_skills:
-    guide: Skills and procedures that should own or support work on the entity.
-    draft_guide: Name only relevant workflows and explain when each one applies.
-  host:
-    guide: Role, connectivity, capabilities, filesystem roots, and operating constraints of the host.
-
 field_sets:
-  entity:
-    - category
-    - host
-    - path
-    - repo
-    - upstream_repo
-    - git
-    - summary
-    - read_first
-    - important
-    - avoid
-    - related
-    - use_skills
-  host:
-    - role
-    - description
-    - availability
-    - lan_ipv4
-    - lan_names
-    - politia_user
-    - politia_root
-    - state_root
-    - ssh_target
-    - capabilities
-    - git_identities
-    - git_enforcement
-    - politia_geometry
-    - enabled
-    - avoid
-
+  entity: [aliases, category, locations, repo, upstream_repo, git, summary, read_first, important, avoid, related, use_skills, notes]
+  host: [role, description, availability, lan_ipv4, lan_names, politia_user, politia_root, state_root, ssh_target, capabilities, git_identities, git_enforcement, politia_geometry, enabled, avoid]
 kinds:
-  project:
-    label: project
-    field_sets: [entity]
-  service:
-    label: service
-    field_sets: [entity]
-  lab:
-    label: lab
-    field_sets: [entity]
-  host:
-    label: host
-    field_sets: [host]
-
+  project: {field_sets: [entity]}
+  service: {field_sets: [entity]}
+  lab: {field_sets: [entity]}
+  host: {field_sets: [host]}
 fields:
-  category:
-    type: string
-    section: identity
-    guide: grouping inside the entity kind without repeating the top-level kind directory
-  host:
-    type: ref
-    target_kind: host
+  aliases: {type: string-list, section: identity, guide: alternate names used in conversation}
+  category: {type: string, section: identity, guide: free-form grouping independent of filesystem directories}
+  locations:
+    type: record-list
     section: location
-    guide: main host entity that owns this entity
-  path:
-    type: string
-    section: location
-    guide: verified absolute path to the entity
-  repo:
-    type: string
-    section: repository
-    guide: primary git repository regardless of visibility or host
-  upstream_repo:
-    type: string
-    section: repository
-    guide: upstream repository for forks or derivatives
+    guide: verified locations; every path belongs to its recorded host
+    fields:
+      host: {type: string}
+      path: {type: string}
+      url: {type: string}
+      purpose: {type: text}
+  repo: {type: string, section: repository, guide: primary repository URL}
+  upstream_repo: {type: string, section: repository, guide: upstream repository for forks or derivatives}
   git:
     type: record
     section: repository
     guide: applicable Git identity and GitHub CLI context
     fields:
-      user_name: { type: string }
-      user_email: { type: string }
-      gh_cli_user: { type: string }
-      instructions: { type: string }
-    paired_fields:
-      - [user_name, user_email]
-  summary:
-    type: text
-    section: summary
-    guide: short verified description
-  read_first:
-    type: string-list
-    section: read_first
-    guide: files or documents to read first
-  important:
-    type: string-list
-    section: important
-    guide: facts that must affect the work
-  avoid:
-    type: string-list
-    section: avoid
-    guide: things an agent must not do or assume
+      user_name: {type: string}
+      user_email: {type: string}
+      gh_cli_user: {type: string}
+      instructions: {type: text}
+    paired_fields: [[user_name, user_email]]
+  summary: {type: text, section: summary, guide: short verified description}
+  read_first: {type: string-list, section: read_first, guide: canonical entry documents; read only what the task needs}
+  important: {type: string-list, section: important, guide: confirmed facts and decisions that affect work}
+  avoid: {type: string-list, section: avoid, guide: concrete restrictions and unsafe assumptions}
   related:
     type: record-list
     section: related
-    guide: related paths, entities, or resources with short notes
+    guide: useful entities or resources with an explanation
     fields:
-      path: { type: string, required: true }
-      note: { type: text }
+      path: {type: string, required: true}
+      note: {type: text}
   use_skills:
     type: record-list
     section: use_skills
-    guide: skills or procedures useful for working with this entity
+    guide: relevant skills and when to use them
     fields:
-      id: { type: string, required: true }
-      note: { type: text }
-
-  role: { type: string, section: host, guide: operational role of the host }
-  description: { type: text, section: host, guide: short verified description of the host }
-  availability: { type: string, section: host, guide: expected availability of the host }
-  lan_ipv4: { type: string, section: host, guide: primary IPv4 address on the local network }
-  lan_names: { type: string-list, section: host, guide: hostnames and aliases used on the local network }
-  politia_user: { type: string, section: host, guide: operating-system user that owns Politia }
-  politia_root: { type: string, section: host, guide: absolute path to the Politia workspace root }
-  state_root: { type: string, section: host, guide: absolute path for mutable Politia runtime state }
-  ssh_target: { type: string, section: host, guide: SSH target used to reach the host }
-  capabilities: { type: string-list, section: host, guide: tools and services available on the host }
+      id: {type: string, required: true}
+      note: {type: text}
+  notes: {type: text, section: notes, guide: other durable facts; exclude session logs and speculation}
+  role: {type: string, section: host, guide: operational role of the host}
+  description: {type: text, section: host, guide: short verified description of the host}
+  availability: {type: string, section: host, guide: expected availability of the host}
+  lan_ipv4: {type: string, section: host, guide: primary IPv4 address on the local network}
+  lan_names: {type: string-list, section: host, guide: hostnames and aliases used on the local network}
+  politia_user: {type: string, section: host, guide: operating-system user that owns Politia}
+  politia_root: {type: string, section: host, guide: absolute path to the Politia workspace root}
+  state_root: {type: string, section: host, guide: absolute path for mutable Politia runtime state}
+  ssh_target: {type: string, section: host, guide: SSH target used to reach the host}
+  capabilities: {type: string-list, section: host, guide: tools and services available on the host}
   git_identities:
     type: record-list
     section: host
     guide: Git identities and CLI contexts available on the host
     fields:
-      user_name: { type: string, required: true }
-      user_email: { type: string, required: true }
-      gh_cli_user: { type: string }
-      instructions: { type: text }
+      user_name: {type: string, required: true}
+      user_email: {type: string, required: true}
+      gh_cli_user: {type: string}
+      instructions: {type: text}
   git_enforcement:
     type: record
     section: host
     guide: Git identity enforcement applied on the host
     fields:
-      guard_profile: { type: string }
-      hooks_path: { type: string }
-  politia_geometry: { type: string-list, section: host, guide: filesystem layout rules that apply on the host }
-  enabled: { type: boolean, section: host, default: true, guide: whether the host is active in Politia }
+      guard_profile: {type: string}
+      hooks_path: {type: string}
+  politia_geometry: {type: string-list, section: host, guide: existing folder conventions; no convention is required by BURO}
+  enabled: {type: boolean, section: host, default: true, guide: whether the host is active in Politia}

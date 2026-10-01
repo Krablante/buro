@@ -1,0 +1,26 @@
+id: service
+label: A running system with its own operation and deployment information.
+fields:
+  aliases: {type: string-list, section: identity, guide: Names used for this service in conversation.}
+  summary: {type: text, section: summary, guide: What the service provides.}
+  locations:
+    type: record-list
+    section: location
+    guide: Source, runtime, data, or access locations; explain their purpose.
+    fields:
+      host: {type: string}
+      path: {type: string}
+      url: {type: string}
+      purpose: {type: text}
+  repo: {type: string, section: repository, guide: Repository URL when applicable.}
+  read_first: {type: string-list, section: read_first, guide: Entry documents and operating instructions.}
+  important: {type: string-list, section: important, guide: Confirmed operating facts and decisions.}
+  avoid: {type: string-list, section: avoid, guide: Concrete operating restrictions.}
+  related:
+    type: record-list
+    section: related
+    guide: Related projects or resources and why they matter.
+    fields:
+      target: {type: string, required: true}
+      note: {type: text}
+  notes: {type: text, section: notes, guide: Durable operating information; exclude completed rollout logs.}

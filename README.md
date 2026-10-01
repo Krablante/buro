@@ -1,111 +1,117 @@
 <h1 align="center">BURO</h1>
 
-<p align="center"><strong>Know where the work lives.</strong></p>
+<p align="center"><strong>Your agent should remember where the work lives.</strong></p>
 
-<p align="center">A typed registry of projects, services, hosts, and the rules for working with them.<br>One command gives a person or an agent the same recorded facts, on any machine with Node.js.</p>
+<p align="center">Recorded facts about your projects, services, machines, and other work.<br>Works with the environment you already have, including scattered folders and multiple computers.</p>
 
 <p align="center"><a href="README.md"><strong>🇬🇧 English</strong></a> · <a href="README.ru.md">🇷🇺 Русский</a></p>
 
-<p align="center"><img src="assets/stickers-en.svg" width="760" alt="BURO stickers: ask BURO, typed facts, one SQLite database, diff first"></p>
+BURO gives your agent useful context between conversations: where a project
+lives, which documents explain it, and which decisions or restrictions matter.
+One SQLite registry holds the facts. The agent looks up the object it needs and
+maintains confirmed information through reviewed changes.
 
-BURO replaces scattered agent context files and retrieval pipelines for facts
-you can name: ownership, paths, entry documents, and operating constraints. A
-preset defines the fields; SQLite stores the records; the CLI renders a packet
-for the entity you ask about. On several machines, an optional HTTP server
-shares the same registry without copying the database to every client.
+No shared workspace root, folder convention, or host record is required. A
+record containing only a name and one important rule is valid. BURO checks
+structure and conflicting edits; it cannot prove that a fact is true or current.
 
-BURO checks structure and declared references. **It cannot prove that a record
-is true or still current.** Check facts at their source and correct them when
-the world changes. Detailed instructions stay in the owning project's docs;
-BURO points you there.
+## Install and connect
 
-## See it work
+Requires **Node.js 24.14+**. Install the release package:
 
-```text
-$ buro my-service
-BURO Entity: service:my-service
-Name: My service
-Context: workstation (current)
-
-LOCATION:
-  host: workstation
-  path: /workspace/services/my-service
-
-READ_FIRST:
-  read_first:
-    - README.md
+```sh
+npm install -g https://github.com/Krablante/buro/releases/download/v2.0.0/buro-2.0.0.tgz
+buro init
+buro connect opencodez
 ```
 
-The fields and headings depend on the active preset. An agent's standing
-instruction can be short: “Ask BURO for the entity in scope; read the entry
-documents it names; check any conflict with the observed system.” Use
-`buro current` for the configured machine and its associated entities;
-`buro list [kind]` only when you need to discover an identifier.
+Choose `opencode`, `codex`, or `claude` instead for those clients. Restart
+OpenCode/OpenCodez after installing the plugin; start a new session in the other
+clients. For another terminal-capable agent, use
+`buro connect file --path /path/to/AGENTS.md`. To edit a System prompt yourself,
+copy the output of `buro agent`; `buro agent --full` supplies the detailed workflow.
+Connections preserve unrelated instructions and back up files they change.
 
-Ordinary edits follow one review loop:
+Then tell your agent, for example: “Remember that my website must only be
+published after I approve it.” BURO supplies instructions and a skill; your
+agent needs terminal access and permission to maintain records. It does not run
+a model, scan your disk, or read chats in the background.
 
-```text
-buro draft pull my-service     # or: draft new <id> [kind], draft delete <id>
-# Edit the YAML file printed by the command.
+For development, clone this repository, run `npm install`, and use
+`node src/cli.js`. A global install is not required.
+
+## A useful record can be small
+
+```yaml
+id: my-site
+name: My website
+kind: project
+important:
+  - Ask me before publishing.
+```
+
+The defaults include `project`, `service`, `host`, and `item`. All content fields
+are optional. Names and aliases work in lookups; ambiguous names ask you to
+choose an id. `buro search website` discovers records without dumping the registry.
+
+```sh
+buro my-site
+buro types project
+buro draft new my-site project  # or draft pull / draft delete
+# Edit the file printed by the command.
 buro draft diff
 buro draft push
 ```
 
-The draft holds the starting revision. A conflicting edit is rejected, and a
-successful change creates a pre-write SQLite snapshot. The GIF is captured
-from the actual CLI in a disposable instance:
+One record can have several `locations`, each with its own machine, path, URL,
+and purpose. A path without a machine gets the client's current machine when
+saved, and that addition appears in the draft diff. Source and runtime can live
+on different machines. Existing folder rules belong in records, not in a
+mandatory setup questionnaire.
 
-![BURO init, draft, diff, push, and current in a disposable starter instance](assets/demo-en.gif)
+![BURO CLI in a disposable instance](assets/demo-en.gif)
 
-## Get started
+## Configure only what you want to change
 
-Requires **Node.js 24.14+**. The CLI itself runs on platforms supported by
-Node.js and its built-in SQLite; the Politia deployment script is for its Linux
-operator setup.
+Program settings live in `~/.config/buro/config.json`. Type definitions are
+separate, self-contained YAML files. Defaults work without editing either.
 
-```sh
-git clone https://github.com/Krablante/buro.git
-cd buro
-npm install -g .
-buro init
+```json
+{
+  "type_files": ["project", "service", "host", "item"]
+}
 ```
 
-`buro init` prints the exact `buro draft new <hostname> host` command for the
-current machine. Run it, open the draft file whose path the command prints,
-fill the required `root` and `summary` fields, then run `buro draft diff`,
-`buro draft push`, and `buro current`. For development, run `npm install` in
-the checkout and invoke `node src/cli.js` without a global installation.
+Use `buro types copy project /path/to/my-project.yaml` to create your own
+definition, then replace `"project"` in `type_files` with that file's path.
+Custom types can use different fields with the same names. There is no hidden
+merging or inheritance: one selected definition per type.
 
-By default the instance lives under `~/.local/share/buro` (including SQLite,
-backups, and the active draft). Configuration lives under
-`~/.config/buro/config.json`; both locations can be changed. See
-[operations](docs/operations.md) for the complete path and environment table.
+Apply changes with `buro init --dry-run`, then `buro init`. Existing data is
+validated first. Removing a populated field or type is rejected without
+discarding it. Known v1 `host/path` records migrate to `locations`; the old
+starter `document` type becomes `item`. Backups are created before adoption.
 
-The default [`starter` preset](presets/starter.yaml) has host, project, service,
-and document records. Define another vocabulary in YAML without changing the
-engine. Use `buro schema [kind]` to inspect the active model. Politia's
-[`politia` preset](presets/politia.yaml) shows a larger real-world model; its
-private records are not bundled.
+## Details
 
-## Where to go next
-
-| Topic | 🇬🇧 English | 🇷🇺 Русский |
+| Topic | English | Русский |
 | --- | --- | --- |
-| Editing and reviewing facts | [Draft workflow](docs/draft-workflow.md) | [Черновики](docs/draft-workflow.ru.md) |
-| Entity model and custom presets | [Model](docs/model.md) | [Модель](docs/model.ru.md) |
-| CLI, HTTP, and exports | [Interfaces](docs/interfaces.md) | [Интерфейсы](docs/interfaces.ru.md) |
-| Storage and code boundaries | [Architecture](docs/architecture.md) | [Архитектура](docs/architecture.ru.md) |
-| Configuration, backups, deployment | [Operations](docs/operations.md) | [Эксплуатация](docs/operations.ru.md) |
+| Definitions and migration | [Model](docs/model.md) | [Модель](docs/model.ru.md) |
+| Agent connections | [Agents](docs/agents.md) | [Агенты](docs/agents.ru.md) |
+| Reviewed changes | [Drafts](docs/draft-workflow.md) | [Черновики](docs/draft-workflow.ru.md) |
+| CLI, HTTP, portability | [Interfaces](docs/interfaces.md) | [Интерфейсы](docs/interfaces.ru.md) |
+| Storage and boundaries | [Architecture](docs/architecture.md) | [Архитектура](docs/architecture.ru.md) |
+| Configuration and deployment | [Operations](docs/operations.md) | [Эксплуатация](docs/operations.ru.md) |
 
-English uses unsuffixed filenames; other languages use a language suffix
-(`README.ru.md`, `docs/model.ru.md`). Add another language with the same topic
-names and a new suffix. Keep behavior and commands aligned across versions,
-while writing naturally in each language.
+An optional HTTP server shares a registry across machines. Local use requires
+no server. The built-in HTTP server has no authentication or TLS; use loopback,
+a trusted private network, or an access-controlled proxy.
+
+BURO replaces repeated explanations and scattered copies of durable facts.
+Project documentation, coding conventions, and document retrieval still have
+their own place. Keep detailed instructions in their owning documents.
 
 ## Contribute
 
-Explain the problem, the resulting behavior, and how you checked it. Keep
-private registry records out of presets, examples, and public artifacts. For
-a substantial change, open an issue first.
-
-Licensed under [MIT](LICENSE).
+Describe the problem, resulting behavior, and practical verification. Keep
+private records and operator details out of public files. Licensed under [MIT](LICENSE).
