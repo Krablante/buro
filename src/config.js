@@ -99,8 +99,8 @@ export function loadConfig() {
     backupRetention,
     preset,
     schemaPath,
-    typeFiles: typeFiles?.map((value) => value.endsWith(".yaml") || value.endsWith(".yml")
-      ? path.resolve(path.dirname(configPath()), value) : value),
+    typeFiles: typeFiles?.map((value) => /^[a-z][a-z0-9-]*$/.test(value)
+      ? value : path.resolve(path.dirname(configPath()), value)),
     defaultKind: fileConfig.default_kind,
     draftPath,
   };

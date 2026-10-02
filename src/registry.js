@@ -84,5 +84,6 @@ export async function readRegistryManifest(filePath, schema, options = {}) {
 
 export async function importRegistry(filePath, options) {
   const { source, manifest, presetMatches, entities } = await readRegistryManifest(filePath, options.schema, options);
+  if (options.draftPath && existsSync(options.draftPath)) throw new Error(`active draft at ${options.draftPath}; finish or preserve it before replacing the registry`);
   return { source, sourcePreset: manifest.preset, adopted: !presetMatches, ...(await replaceRegistryRecords(entities, options)) };
 }

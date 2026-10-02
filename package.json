@@ -1,7 +1,7 @@
 {
   "name": "buro",
-  "version": "2.0.0",
-  "description": "Typed context registry for people and agents, with SQLite storage and reviewed YAML drafts.",
+  "version": "2.0.1",
+  "description": "Typed knowledge storage for AI agents, with YAML-defined schemas. Replaces sprawling AGENTS.md and RAG for durable context.",
   "license": "MIT",
   "keywords": [
     "ai-agents",

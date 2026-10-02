@@ -43,7 +43,9 @@ async function requestJson(baseUrl, path, { method = "GET", body, revision } = {
     throw new Error(`BURO API returned invalid JSON (HTTP ${response.status}): ${url}`);
   }
   if (!response.ok) {
-    throw new Error(`BURO API ${response.status}: ${payload?.error || response.statusText || "request failed"}`);
+    const error = new Error(`BURO API ${response.status}: ${payload?.error || response.statusText || "request failed"}`);
+    error.status = response.status;
+    throw error;
   }
   return payload;
 }

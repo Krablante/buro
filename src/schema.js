@@ -41,6 +41,10 @@ function requireStringArray(value, label) {
   return value.map((entry) => entry.trim());
 }
 
+function requireDefinitionKey(name, label) {
+  if (["__proto__", "constructor", "prototype"].includes(name)) throw new Error(`${label} uses reserved key: ${name}`);
+}
+
 function validateFieldDefinition(name, field) {
   if (!plainObject(field)) throw new Error(`schema field ${name} must be an object`);
   rejectUnknownKeys(field, FIELD_KEYS, `schema field ${name}`);
@@ -61,6 +65,7 @@ function validateFieldDefinition(name, field) {
   if (isRecord && !plainObject(field.fields)) throw new Error(`schema field ${name} requires nested fields`);
   if (!isRecord && field.fields !== undefined) throw new Error(`schema field ${name}.fields is valid only for record fields`);
   for (const [nestedName, nestedField] of Object.entries(field.fields || {})) {
+    requireDefinitionKey(nestedName, `schema field ${name}`);
     validateFieldDefinition(`${name}.${nestedName}`, nestedField);
   }
   if (field.paired_fields !== undefined) {
@@ -69,7 +74,7 @@ function validateFieldDefinition(name, field) {
     }
     for (const [index, pair] of field.paired_fields.entries()) {
       const names = requireStringArray(pair, `schema field ${name}.paired_fields[${index}]`);
-      if (names.length < 2 || names.some((nestedName) => !field.fields[nestedName])) {
+      if (names.length < 2 || names.some((nestedName) => !Object.hasOwn(field.fields, nestedName))) {
         throw new Error(`schema field ${name}.paired_fields[${index}] must reference at least two declared nested fields`);
       }
     }
@@ -124,6 +129,7 @@ export function normalizeSchema(input, source = "BURO schema") {
     if (input.fields[name]) throw new Error(`${source} field ${name} is reserved`);
   }
   for (const [name, field] of Object.entries(input.fields)) {
+    requireDefinitionKey(name, source);
     validateFieldDefinition(name, field);
     fields[name] = field;
   }
@@ -140,11 +146,13 @@ export function normalizeSchema(input, source = "BURO schema") {
   const fieldSets = input.field_sets || {};
   if (!plainObject(fieldSets)) throw new Error(`${source} field_sets must be an object`);
   for (const [setName, values] of Object.entries(fieldSets)) {
+    requireDefinitionKey(setName, source);
     fieldSets[setName] = requireStringArray(values, `${source} field_sets.${setName}`);
   }
 
   const kinds = {};
   for (const [kindName, kind] of Object.entries(input.kinds)) {
+    requireDefinitionKey(kindName, source);
     if (!plainObject(kind)) throw new Error(`${source} kind ${kindName} must be an object`);
     rejectUnknownKeys(kind, KIND_KEYS, `${source} kind ${kindName}`);
     if (kind.label !== undefined) requireString(kind.label, `${source} kind ${kindName}.label`);
@@ -153,7 +161,7 @@ export function normalizeSchema(input, source = "BURO schema") {
     const kindFieldNames = [];
     for (const setName of setNames) {
       const values = fieldSets[setName];
-      if (!values) throw new Error(`${source} kind ${kindName} references unknown field set: ${setName}`);
+      if (!Object.hasOwn(fieldSets, setName)) throw new Error(`${source} kind ${kindName} references unknown field set: ${setName}`);
       kindFieldNames.push(...values);
     }
     kindFieldNames.push(...directFields);
@@ -161,19 +169,20 @@ export function normalizeSchema(input, source = "BURO schema") {
     const definitions = kind.definitions || {};
     if (!plainObject(definitions)) throw new Error(`${source} kind ${kindName}.definitions must be an object`);
     for (const [name, field] of Object.entries(definitions)) {
+      requireDefinitionKey(name, source);
       if (RESERVED_FIELDS.has(name)) throw new Error(`${source} field ${name} is reserved`);
       validateFieldDefinition(name, field);
       if (!uniqueFields.includes(name)) throw new Error(`${source} kind ${kindName} has unused definition: ${name}`);
     }
     for (const fieldName of uniqueFields) {
-      if (!definitions[fieldName] && !fields[fieldName]) throw new Error(`${source} kind ${kindName} references unknown field: ${fieldName}`);
+      if (!Object.hasOwn(definitions, fieldName) && !Object.hasOwn(fields, fieldName)) throw new Error(`${source} kind ${kindName} references unknown field: ${fieldName}`);
     }
     kinds[kindName] = { ...(kind.label ? { label: kind.label } : {}), field_sets: setNames, fields: uniqueFields,
       ...(Object.keys(definitions).length ? { definitions } : {}) };
   }
 
   const defaultKind = requireString(input.default_kind, `${source} default_kind`);
-  if (!kinds[defaultKind]) throw new Error(`${source} default_kind is unknown: ${defaultKind}`);
+  if (!Object.hasOwn(kinds, defaultKind)) throw new Error(`${source} default_kind is unknown: ${defaultKind}`);
   let context = null;
   if (input.context !== undefined && input.context !== null) {
     if (!plainObject(input.context)) throw new Error(`${source} context must be an object`);
@@ -182,7 +191,7 @@ export function normalizeSchema(input, source = "BURO schema") {
     for (const key of ["alias_field", "member_field", "root_field"]) {
       if (input.context[key] !== undefined) context[key] = requireString(input.context[key], `${source} context.${key}`);
     }
-    if (!kinds[context.kind]) throw new Error(`${source} context.kind is unknown: ${context.kind}`);
+    if (!Object.hasOwn(kinds, context.kind)) throw new Error(`${source} context.kind is unknown: ${context.kind}`);
     if (context.alias_field) {
       const alias = kinds[context.kind].definitions?.[context.alias_field] || fields[context.alias_field];
       if (!alias || alias.type !== "string-list" || !kinds[context.kind].fields.includes(context.alias_field)) {
@@ -204,11 +213,6 @@ export function normalizeSchema(input, source = "BURO schema") {
       }
     }
   }
-  for (const [name, field] of Object.entries(fields)) {
-    if (field.type === "ref" && field.target_kind && !kinds[field.target_kind]) {
-      throw new Error(`${source} field ${name} targets unknown kind: ${field.target_kind}`);
-    }
-  }
   for (const sectionName of Object.keys(sections)) {
     if (![...Object.values(fields), ...Object.values(kinds).flatMap((kind) => Object.values(kind.definitions || {}))].some((field) => (field.section || "facts") === sectionName)) {
       throw new Error(`${source} section ${sectionName} is not used by any field`);
@@ -225,14 +229,14 @@ export function normalizeSchema(input, source = "BURO schema") {
     kinds,
     fields,
   };
-  for (const [name, field] of Object.entries(fields)) {
+  function validateModelField(name, field) {
+    if (field.type === "ref" && field.target_kind && !Object.hasOwn(kinds, field.target_kind)) throw new Error(`${source} field ${name} targets unknown kind: ${field.target_kind}`);
     if (Object.hasOwn(field, "default")) normalizeFieldValue(field.default, field, `schema field ${name}.default`);
+    for (const [nestedName, nested] of Object.entries(field.fields || {})) validateModelField(`${name}.${nestedName}`, nested);
   }
+  for (const [name, field] of Object.entries(fields)) validateModelField(name, field);
   for (const kind of Object.values(kinds)) {
-    for (const [name, field] of Object.entries(kind.definitions || {})) {
-      if (field.type === "ref" && field.target_kind && !kinds[field.target_kind]) throw new Error(`${source} field ${name} targets unknown kind: ${field.target_kind}`);
-      if (Object.hasOwn(field, "default")) normalizeFieldValue(field.default, field, `schema field ${name}.default`);
-    }
+    for (const [name, field] of Object.entries(kind.definitions || {})) validateModelField(name, field);
   }
   return Object.freeze({
     ...normalized,
@@ -287,8 +291,8 @@ export function fieldDefinition(schema, kind, name) {
 }
 
 export function kindFields(schema, kind) {
+  if (!Object.hasOwn(schema.kinds, kind)) throw new Error(`unsupported entity kind: ${kind}`);
   const definition = schema.kinds[kind];
-  if (!definition) throw new Error(`unsupported entity kind: ${kind}`);
   return definition.fields;
 }
 
@@ -315,11 +319,12 @@ function normalizeScalar(value, field, label) {
 
 function normalizeRecord(value, field, label) {
   if (!plainObject(value)) throw new Error(`${label} must be an object`);
-  const unknown = Object.keys(value).filter((key) => !field.fields[key]);
+  const unknown = Object.keys(value).filter((key) => !Object.hasOwn(field.fields, key));
   if (unknown.length) throw new Error(`${label} contains unknown fields: ${unknown.join(", ")}`);
   const result = {};
   for (const [name, nested] of Object.entries(field.fields)) {
-    const normalized = normalizeFieldValue(value[name], nested, `${label}.${name}`);
+    const input = Object.hasOwn(value, name) ? value[name] : nested.default;
+    const normalized = normalizeFieldValue(input, nested, `${label}.${name}`);
     if (normalized !== undefined) result[name] = normalized;
     if (nested.required && normalized === undefined) throw new Error(`${label}.${name} is required`);
   }
@@ -339,7 +344,7 @@ export function normalizeFieldValue(value, field, label) {
   }
   if (field.type === "string-list") {
     if (!Array.isArray(value)) throw new Error(`${label} must be a list`);
-    return value.map((entry, index) => normalizeScalar(entry, { type: "string" }, `${label}[${index}]`));
+    return value.map((entry, index) => requireString(entry, `${label}[${index}]`));
   }
   if (field.type === "record") return normalizeRecord(value, field, label);
   if (field.type === "record-list") {

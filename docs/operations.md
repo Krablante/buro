@@ -54,7 +54,8 @@ selection takes precedence over them.
 
 `buro backup` uses SQLite's online backup API. Successful mutations and schema
 adoption take pre-write snapshots; previews do not. The newest 20 are retained
-by default. Backups copy the database, so high-frequency edits to a large
+by default. An unchanged `init` creates no snapshot. New databases and snapshots
+are created with mode 0600; existing permissions are preserved. Backups copy the database, so high-frequency edits to a large
 registry cost I/O and disk space. Keep events and transcripts elsewhere. Check
 recovery in a separate instance using an export/import or a snapshot.
 
@@ -72,12 +73,15 @@ must not copy, synchronize, or open the central SQLite file.
 
 ## Politia deployment
 
-`npm run deploy:politia` (alias `deploy:live`) is the existing Linux operator
-workflow, not the public installer. It checks the terminal demos, previews the
-central migration, packs once, upgrades the central installation and API, and
-installs the same package on reachable workers. It uses the configured SSH and
-sudo access and the Politia preset. Review `scripts/deploy-live.sh` before use
-outside that environment. Source edits alone are not installed behavior.
+`npm run deploy:politia` (alias `deploy:live`) is the Linux rollout for Politia's
+existing central installation and clients. It previews adoption, packs once,
+stops the API, saves the old package and a snapshot, and upgrades the central
+installation. Rollback remains available until installed CLI and HTTP checks
+succeed. Workers receive the same package. Existing configuration files stay
+in place, including custom endpoints and draft paths. SSH, sudo, Node, and the
+user unit `buro-api.service` must already work. This workflow uses the central
+configuration and does not require ffmpeg. Source edits alone are not installed
+behavior; review the script before using it outside Politia.
 
 ```sh
 npm run deploy:politia -- --dry-run
@@ -85,12 +89,40 @@ npm run deploy:politia
 ```
 
 Offline workers are reported as pending. A reachable worker failure fails the
-deployment. Keep the package when rollout is incomplete; finish it when the
-host becomes available. Agent plugins need their own refresh and process restart.
+deployment. Each run retains its package, rollback materials, and `pending.json`
+under `<state_dir>/deployments/<version>-<timestamp>/`. The record contains the
+package checksum and worker results. Keep it until the rollout is complete;
+install the retained package on an offline worker when it returns. The script
+refreshes the OpenCodez connection; changed plugin code needs a client restart.
 
-## Terminal demos
+`BURO_SOURCE_ROOT` selects the checkout; `BURO_ROOT` still selects instance data.
+`PACK_DIR` overrides artifact storage. `BURO_WORKER_HOSTS` limits the rollout to
+space-separated SSH names; otherwise hosts come from the registry.
+`BURO_WORKER_PREFIX` defaults to `/usr`; the central prefix is `/usr/local`.
+`--skip-workers` updates only the central installation. Terminal media belongs
+to [development](development.md), independently of runtime deployment.
 
-`npm run demos` regenerates the bilingual GIFs from real CLI use with isolated
-starter data. `npm run demos:check` checks them against that flow. Rendering
-requires ffmpeg with ass/palette filters and DejaVu Sans/Mono; select fonts with
-`BURO_DEMO_FONTS_DIR`. No operator database or draft is used.
+## Recovery and common errors
+
+Test recovery in another instance first. Point it at the same definitions and
+an isolated data root, initialize it, then import the export:
+
+```sh
+BURO_CONFIG=/path/to/recovery/config.json BURO_ROOT=/path/to/recovery/data buro init
+BURO_CONFIG=/path/to/recovery/config.json BURO_ROOT=/path/to/recovery/data buro import /path/to/export.yaml
+BURO_CONFIG=/path/to/recovery/config.json BURO_ROOT=/path/to/recovery/data buro list
+```
+
+For custom definitions, create the recovery config before initializing. Its
+`type_files` must select the saved custom files, or `schema_path` can point at
+the export's `model` saved as its own YAML file. A SQLite snapshot can replace
+the target database while its API and writers are stopped; verify `buro list`
+and a known record before restarting the service.
+
+| Symptom | Next action |
+| --- | --- |
+| Unapplied model / different hash | Review `init --dry-run`; restore the definition if the preview rejects saved fields. |
+| Draft already exists | Inspect the printed file; finish it or preserve it before `draft clear`. |
+| Revision conflict | Preserve edits, pull a fresh draft, and review them against the current record. |
+| API unavailable / timeout | Check the client's URL and `/health` on the registry host. The draft is retained; read the record before retrying a write. |
+| Agent ignores BURO | Check `buro` in the agent's terminal, reconnect, then start a new session. |

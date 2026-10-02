@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 
 import { loadConfig } from "./config.js";
-import { initDb, openDatabase } from "./db.js";
+import { assertSchemaBinding, openDatabase } from "./db.js";
 import {
   createEntityRecord,
   deleteEntityRecord,
@@ -48,13 +48,16 @@ function requestRevision(request) {
 }
 
 async function readJsonBody(request) {
-  let body = "";
+  const chunks = [];
+  let bytes = 0;
   for await (const chunk of request) {
-    body += chunk;
-    if (Buffer.byteLength(body) > MAX_JSON_BODY_BYTES) {
+    bytes += chunk.length;
+    if (bytes > MAX_JSON_BODY_BYTES) {
       throw httpError("request body is too large", 413);
     }
+    chunks.push(chunk);
   }
+  const body = Buffer.concat(chunks, bytes).toString("utf8");
   if (body.trim() === "") {
     return {};
   }
@@ -75,17 +78,17 @@ async function readJsonBody(request) {
 export function createApiServer(options = {}) {
   const config = { ...loadConfig(), ...options };
   return createServer(async (request, response) => {
-    const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
-    const path = url.pathname.replace(/\/$/, "") || "/";
-    const currentContext = url.searchParams.get("current_context") || config.currentContext;
-
     try {
+      const url = new URL(request.url || "/", "http://localhost");
+      const path = url.pathname.replace(/\/$/, "") || "/";
+      const currentContext = url.searchParams.get("current_context") || config.currentContext;
       if (path === "/health") {
         if (request.method !== "GET") {
           methodNotAllowed(response);
           return;
         }
-        sendJson(response, 200, await resolveHealth(config));
+        const health = await resolveHealth(config);
+        sendJson(response, health.ok ? 200 : 503, health);
         return;
       }
 
@@ -193,7 +196,7 @@ export function createApiServer(options = {}) {
 
       notFound(response);
     } catch (error) {
-      sendJson(response, error?.status || 500, {
+      sendJson(response, error?.status || (error instanceof URIError || error.code === "ERR_INVALID_URL" ? 400 : 500), {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -203,10 +206,13 @@ export function createApiServer(options = {}) {
 
 export async function serve(options = {}) {
   const config = loadConfig();
+  const apiHost = options.apiHost || "127.0.0.1";
+  const apiPort = Number(options.apiPort ?? 8765);
+  if (!Number.isInteger(apiPort) || apiPort < 1 || apiPort > 65535) throw new Error("API port must be an integer from 1 to 65535");
   const databasePath = options.databasePath || config.databasePath;
   const schema = options.schema || loadSchema({ ...config, ...options });
-  await initDb(databasePath, schema);
-  const database = openDatabase(databasePath);
+  const database = openDatabase(databasePath, { mustExist: true });
+  try { assertSchemaBinding(database, schema); } catch (error) { database.close(); throw error; }
   const server = createApiServer({
     database,
     databasePath,
@@ -214,13 +220,18 @@ export async function serve(options = {}) {
     backupDir: config.backupDir,
     backupRetention: config.backupRetention,
   });
-  const apiHost = options.apiHost || "127.0.0.1";
-  const apiPort = Number.parseInt(options.apiPort || "8765", 10);
-  server.on("close", () => {
+  const closeDatabase = () => database.close();
+  server.on("close", closeDatabase);
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(apiPort, apiHost, resolve);
+    });
+  } catch (error) {
+    server.off("close", closeDatabase);
     database.close();
-  });
-  server.listen(apiPort, apiHost, () => {
-    console.error(`BURO API listening on http://${apiHost}:${apiPort}`);
-  });
+    throw error;
+  }
+  console.error(`BURO API listening on http://${apiHost}:${apiPort}`);
   return server;
 }

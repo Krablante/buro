@@ -4,16 +4,18 @@ import path from "node:path";
 import { contextKey, loadConfig } from "./config.js";
 import {
   assertSchemaBinding,
+  assertSupportedDatabase,
   backupDatabase,
   checkDb,
   createEntity as createDbEntity,
   deleteEntity as deleteDbEntity,
+  findEntityMatching,
   getEntity,
   listEntities,
-  listEntityIds,
   listEntitySummaries,
   listMemberSummaries,
   lookupEntities,
+  lookupIdentityCandidates,
   openDatabase,
   replaceEntities,
   schemaSql,
@@ -93,7 +95,7 @@ function contextMatches(entity, value, schema) {
 
 async function validateReferences(entity, config) {
   for (const ref of references(entity, config.schema)) {
-    const target = await getEntity(ref.id, config.database, config.schema);
+    const target = ref.id === entity.id ? entity : await getEntity(ref.id, config.database, config.schema);
     if (!target) throw conflict(`${ref.label} references missing entity: ${ref.id}`);
     if (ref.kind && target.kind !== ref.kind) {
       throw conflict(`${ref.label} must reference ${ref.kind}, got ${target.kind}: ${target.id}`);
@@ -103,22 +105,22 @@ async function validateReferences(entity, config) {
 
 async function validateLookupIdentity(entity, config) {
   if (!config.schema.context) return;
-  const contexts = await listEntities(config.database, config.schema, { kind: config.schema.context.kind });
+  const keys = entity.kind === config.schema.context.kind ? contextKeys(entity, config.schema) : [contextKey(entity.id)];
+  const candidates = await lookupIdentityCandidates(keys, config.database, config.schema, entity.id);
   if (entity.kind === config.schema.context.kind) {
-    const candidateKeys = new Set(contextKeys(entity, config.schema));
-    for (const id of await listEntityIds(config.database, config.schema)) {
-      if (id !== entity.id && candidateKeys.has(contextKey(id))) {
-        throw conflict(`context name or alias is already used as entity id ${id}`);
+    const candidateKeys = new Set(keys);
+    for (const existing of candidates) {
+      if (candidateKeys.has(contextKey(existing.id))) {
+        throw conflict(`context name or alias is already used as entity id ${existing.id}`);
       }
-    }
-    for (const existing of contexts) {
-      if (existing.id === entity.id) continue;
+      if (existing.kind !== config.schema.context.kind) continue;
       const duplicate = contextKeys(existing, config.schema).find((key) => candidateKeys.has(key));
       if (duplicate) throw conflict(`context name or alias is already used by ${existing.id}: ${duplicate}`);
     }
     return;
   }
-  for (const existing of contexts) {
+  for (const existing of candidates) {
+    if (existing.kind !== config.schema.context.kind) continue;
     if (contextKeys(existing, config.schema).includes(contextKey(entity.id))) {
       throw conflict(`entity id conflicts with context name or alias ${existing.id}: ${entity.id}`);
     }
@@ -126,14 +128,15 @@ async function validateLookupIdentity(entity, config) {
 }
 
 async function validateNotReferenced(entityId, config) {
-  for (const entity of await listEntities(config.database, config.schema)) {
-    if (entity.id === entityId) continue;
-    for (const ref of references(entity, config.schema)) {
-      if (ref.id === entityId) {
-        throw conflict(`cannot delete ${entityId}; referenced by ${entity.id}.${ref.label}`);
-      }
-    }
-  }
+  const containsRef = (field) => field.type === "ref" || Object.values(field.fields || {}).some(containsRef);
+  const kinds = Object.keys(config.schema.kinds).filter((kind) => config.schema.kinds[kind].fields.some((name) => containsRef(fieldDefinition(config.schema, kind, name))));
+  let reference;
+  const owner = await findEntityMatching(config.database, config.schema, kinds, (entity) => {
+    if (entity.id === entityId) return false;
+    reference = references(entity, config.schema).find((ref) => ref.id === entityId);
+    return Boolean(reference);
+  });
+  if (owner) throw conflict(`cannot delete ${entityId}; referenced by ${owner.id}.${reference.label}`);
 }
 
 async function resolveContext(value, config) {
@@ -171,7 +174,7 @@ export function validateEntitySet(input, schema) {
     }
   }
   for (const entity of entities) {
-    if (entity.kind !== schema.context?.kind && contextOwners.has(contextKey(entity.id))) {
+    if (contextOwners.has(contextKey(entity.id)) && contextOwners.get(contextKey(entity.id)) !== entity.id) {
       throw new Error(`entity id ${entity.id} conflicts with context name or alias owned by ${contextOwners.get(contextKey(entity.id))}`);
     }
   }
@@ -185,6 +188,7 @@ export async function replaceRegistryRecords(input, options = {}) {
     await mkdir(path.dirname(config.databasePath), { recursive: true });
     const database = openDatabase(config.databasePath);
     try {
+      assertSupportedDatabase(database);
       database.exec(schemaSql);
       return await withWriteTransaction(database, async (db) => {
         const previousCount = db.prepare("SELECT count(*) AS count FROM entities").get().count;
@@ -206,7 +210,7 @@ export async function replaceRegistryRecords(input, options = {}) {
 export async function resolveHealth(options = {}) {
   const config = resolverConfig(options);
   return {
-    ...(await checkDb(config.database)),
+    ...(await checkDb(config.database, config.schema)),
     preset: config.schema.id,
     preset_version: config.schema.version,
     preset_hash: config.schema.hash,
@@ -226,7 +230,11 @@ export async function resolveEntities(options = {}) {
 
 export async function resolveEntitySummaries(kind, options = {}) {
   const config = resolverConfig(options);
-  if (kind && !config.schema.kinds[kind]) throw new Error(`unsupported entity kind: ${kind}`);
+  if (kind && !Object.hasOwn(config.schema.kinds, kind)) {
+    const error = new Error(`unsupported entity kind: ${kind}`);
+    error.status = 400;
+    throw error;
+  }
   const context = await resolveContext(config.currentContext, config);
   return {
     entities: await listEntitySummaries(config.database, config.schema, kind, options),

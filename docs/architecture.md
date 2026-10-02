@@ -31,13 +31,27 @@ Changes take a SQLite write lock, check the starting revision and references,
 create a consistent pre-write backup, and update the canonical row and indexes.
 The process serializes mutations; SQLite coordinates other processes. Nested
 declared references are checked too. Failed writes preserve the draft.
+Machine-id and alias conflicts use the lookup index instead of enumerating the
+registry. Deletion checks only types that declare references and reads their
+rows one at a time; a model without references needs no deletion scan.
 
 `init` validates a proposed model before adoption. Known old models migrate
 host/path to locations; incompatible custom changes fail before writes. Changed
 records receive new revisions. A preview runs validation without modifying the
 database. Server startup verifies the applied binding without rebuilding all
 indexes on every restart.
+Repeating `init` with unchanged definitions leaves the database and backups
+untouched. Guide-only changes update model metadata without rebuilding rows or
+indexes. A preview uses a read transaction, so it does not take a write lock.
 
-Full enumeration is used for export, explicit administration, schema adoption,
-and deletion reference checks. Backups copy SQLite before mutations, so frequent writes to a large
+Full enumeration is used for export, explicit administration, and changed schema
+adoption. Backups copy SQLite before mutations, so frequent writes to a large
 registry have real I/O cost. BURO is intended for durable facts, not event logs.
+
+The source tree follows these responsibilities: `schema.js` reads and validates
+definitions and values; `db.js` owns SQLite and derived indexes; `resolver.js`
+owns lookup and mutation rules; `migration.js` and `registry.js` apply models and
+portable exports. CLI/draft, HTTP/client, packet rendering, and agent connections
+each keep their own presentation or transport details. There is no separate
+service per responsibility. [Development](development.md) covers changing and
+packaging these parts.

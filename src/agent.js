@@ -40,24 +40,16 @@ async function save(file, contents, old) {
   await writeFile(file, contents, { mode: 0o600 });
 }
 
-async function instructionFile(file) {
-  const old = await existing(file);
+function instructionContents(file, old) {
   const block = `${START}\n${agentContract()}${END}`;
   const start = old.indexOf(START);
   const end = old.indexOf(END);
-  if ((start === -1) !== (end === -1) || (start !== -1 && end < start) || old.indexOf(START, start + START.length) !== -1) {
+  if ((start === -1) !== (end === -1) || (start !== -1 && end < start)
+    || old.indexOf(START, start + START.length) !== -1 || old.indexOf(END, end + END.length) !== -1) {
     throw new Error(`malformed BURO block in ${file}; preserve and repair it before reconnecting`);
   }
-  const contents = start === -1 ? `${old}${old && !old.endsWith("\n") ? "\n" : ""}${old ? "\n" : ""}${block}\n`
+  return start === -1 ? `${old}${old && !old.endsWith("\n") ? "\n" : ""}${old ? "\n" : ""}${block}\n`
     : old.slice(0, start) + block + old.slice(end + END.length);
-  await save(file, contents, old);
-}
-
-async function managedFile(file, resource) {
-  const contents = await readFile(new URL(resource, import.meta.url), "utf8");
-  const old = await existing(file);
-  if (old && !old.includes(managed)) throw new Error(`existing user file ${file}; choose another path or integrate manually`);
-  await save(file, contents, old);
 }
 
 export async function connectAgent(target, options = {}) {
@@ -66,28 +58,32 @@ export async function connectAgent(target, options = {}) {
   if (target === "file") {
     if (!options.path) throw new Error("connect file requires --path to an agent instruction file");
     const file = path.resolve(options.path);
-    await instructionFile(file);
+    const old = await existing(file);
+    await save(file, instructionContents(file, old), old);
     return [file];
   }
   if (!["opencodez", "opencode", "codex", "claude"].includes(target)) throw new Error("choose opencodez, opencode, codex, claude, or file");
   const root = options.path ? path.resolve(options.path) : path.join(userRoot,
     target === "codex" ? ".codex" : target === "claude" ? ".claude" : `.config/${target}`);
   const skillRoot = target === "codex" && !options.path ? path.join(userRoot, ".agents", "skills") : path.join(root, "skills");
-  // Refuse unrelated files before changing any integration files.
+  // Prepare and validate every target before changing integration files.
   const skill = path.join(skillRoot, "buro", "SKILL.md");
   const plugin = path.join(root, "plugins", "buro.js");
-  for (const file of [skill, ...(["opencode", "opencodez"].includes(target) ? [plugin] : [])]) {
+  const resources = [[skill, "../skills/buro/SKILL.md"]];
+  if (["opencode", "opencodez"].includes(target)) resources.push([plugin, "../integrations/opencode/plugin.js"]);
+  const updates = [];
+  for (const [file, resource] of resources) {
     const old = await existing(file);
     if (old && !old.includes(managed)) throw new Error(`existing user file ${file}; choose another path or integrate manually`);
+    updates.push({ file, old, contents: await readFile(new URL(resource, import.meta.url), "utf8") });
   }
-  await managedFile(skill, "../skills/buro/SKILL.md");
-  files.push(skill);
-  if (["opencode", "opencodez"].includes(target)) {
-    await managedFile(plugin, "../integrations/opencode/plugin.js");
-    files.push(plugin);
-  } else {
+  if (!["opencode", "opencodez"].includes(target)) {
     const file = path.join(root, target === "claude" ? "CLAUDE.md" : "AGENTS.md");
-    await instructionFile(file);
+    const old = await existing(file);
+    updates.push({ file, old, contents: instructionContents(file, old) });
+  }
+  for (const { file, old, contents } of updates) {
+    await save(file, contents, old);
     files.push(file);
   }
   return files;

@@ -1,10 +1,3 @@
-function fieldGuideText(schema) {
-  return schema.kinds[schema.default_kind].fields
-    .filter((field) => fieldDefinition(schema, schema.default_kind, field).guide)
-    .map((field) => `  - ${field}: ${fieldDefinition(schema, schema.default_kind, field).guide}`)
-    .join("\n");
-}
-
 function kindSectionNames(schema, kind) {
   return [...new Set(schema.kinds[kind].fields.map((field) => fieldDefinition(schema, kind, field).section || "facts"))];
 }
@@ -15,14 +8,14 @@ function sectionGuideLines(schema, kind, indent = "  ") {
     .map((name) => `${indent}- ${name}: ${schema.sections[name].guide}`);
 }
 
-export function renderUsage(schema) {
-  const sections = sectionGuideLines(schema, schema.default_kind);
+export function renderUsage() {
   return [
     "BURO keeps durable work context in one SQLite registry, using configurable record types.",
     "",
     "Usage:",
     "  buro init [--dry-run]",
-    "  buro connect <opencodez|opencode|codex|claude|file> [--path <file>]",
+    "  buro connect <opencodez|opencode|codex|claude> [--path <profile-directory>]",
+    "  buro connect file --path <instruction-file>",
     "  buro agent",
     "  buro types [<kind>|copy <kind> <file>]",
     "  buro <id>",
@@ -40,6 +33,8 @@ export function renderUsage(schema) {
     "  buro draft clear",
     "  buro export <file>",
     "  buro import <file> [--adopt]",
+    "  buro backup",
+    "  buro serve [--host <address>] [--port <port>]",
     "  buro --version",
     "  buro help",
     "",
@@ -51,23 +46,18 @@ export function renderUsage(schema) {
     "  search        Find identities by text without loading full records.",
     "  <id>          Render one entity.",
     "  current       Render current-context information for agent prompts.",
-    "  list [kind]   List all entities, optionally filtered by kind.",
+    "  list [kind]   List a page of identities, optionally filtered by kind.",
     "  schema        Inspect the normalized model; add a kind for its field guide.",
     "  draft         Review and apply the one local YAML draft.",
     "  export        Write a complete portable registry manifest.",
     "  import        Validate and atomically replace from a manifest.",
-    "  help          Show this usage and the default-kind section and field guide.",
+    "  backup        Take a consistent SQLite snapshot.",
+    "  serve         Share the local registry over HTTP (loopback by default).",
+    "  help          Show commands, even when the registry is unavailable.",
     "",
     "How to edit entities:",
-    `  Use draft for every write. The default kind is ${schema.default_kind}. Leave unknown facts empty instead of guessing.`,
-    "",
-    ...(sections.length ? [
-      `${schema.default_kind} sections:`,
-      ...sections,
-      "",
-    ] : []),
-    `${schema.default_kind} fields:`,
-    fieldGuideText(schema),
+    "  Use draft for every write. Leave unknown facts empty instead of guessing.",
+    "  buro types shows the active types and default; buro types <kind> explains fields.",
     "",
   ].join("\n");
 }
@@ -84,8 +74,8 @@ export function renderSchemaSummary(schema) {
 }
 
 export function renderKindSchema(schema, kind) {
+  if (!Object.hasOwn(schema.kinds, kind)) throw new Error(`unsupported entity kind: ${kind}`);
   const definition = schema.kinds[kind];
-  if (!definition) throw new Error(`unsupported entity kind: ${kind}`);
   const sections = sectionGuideLines(schema, kind, "");
   const lines = [
     `BURO type: ${kind}`,

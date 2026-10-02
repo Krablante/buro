@@ -15,6 +15,9 @@ up to 100 records with a location on that machine. A missing host record is a
 normal result. `init --dry-run` previews adoption; `init` applies it.
 `agent`, `agent --full`, and `connect` support [agent integration](agents.md).
 Ordinary writes use the [draft workflow](draft-workflow.md).
+`buro help` works without a configured or reachable registry. Options accept
+both `--limit 100` and `--limit=100`; missing values and extra arguments fail
+instead of being silently ignored.
 
 ## HTTP
 
@@ -22,7 +25,7 @@ Ordinary writes use the [draft workflow](draft-workflow.md).
 
 | Route | Meaning |
 | --- | --- |
-| `GET /health` | Database and applied model status |
+| `GET /health` | Database and applied model status; HTTP 503 if the binding differs |
 | `GET /schema` | Normalized active definitions, including per-kind fields |
 | `GET /entities` | All full records for explicit administration |
 | `GET /entities?summary=1&kind=project&q=site&limit=100&offset=0` | Identity page; kind and query are optional |
@@ -47,6 +50,8 @@ without source-file paths. `buro import <file> [--adopt]` validates all records
 and references before replacing the registry in one transaction. A nonempty
 target is backed up. Version 1 exports remain supported, including recognized
 legacy migrations with `--adopt`.
+Finish or preserve an active draft before import; replacing a registry with an
+active draft is refused.
 
 Select definitions matching the export when restoring a custom instance; its
 `model` object is also a valid full schema for `schema_path`. `--adopt` allows

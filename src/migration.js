@@ -1,12 +1,12 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { backupDatabase, initDb, openDatabase, readSchemaBinding, replaceEntities, schemaSql, withWriteTransaction } from "./db.js";
+import { assertSupportedDatabase, backupDatabase, initDb, openDatabase, readSchemaBinding, readStoredModel, replaceEntities, schemaSql, withWriteTransaction, writeSchemaBinding } from "./db.js";
 import { loadSchema, normalizeSchema } from "./schema.js";
 import { validateEntitySet } from "./resolver.js";
 
 function previousSchema(db, binding) {
-  const stored = db.prepare("SELECT value FROM buro_meta WHERE key = 'model'").get();
-  if (stored) return normalizeSchema(JSON.parse(stored.value), "stored model");
+  const stored = readStoredModel(db);
+  if (stored) return normalizeSchema(stored, "stored model");
   if (["starter", "politia"].includes(binding?.preset)) {
     const file = new URL(`../presets/legacy/${binding.preset}-v${binding.preset_version}.yaml`, import.meta.url);
     if (existsSync(file)) {
@@ -17,14 +17,18 @@ function previousSchema(db, binding) {
   return null;
 }
 
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+}
+
 export function migrateEntities(entities, binding, oldSchema, schema) {
   const historical = oldSchema && ["starter", "politia"].includes(oldSchema.id)
     ? new URL(`../presets/legacy/${oldSchema.id}-v${oldSchema.version}.yaml`, import.meta.url) : null;
   const legacy = historical && existsSync(historical) && loadSchema(fileURLToPath(historical)).hash === oldSchema.hash && binding.preset === schema.id;
-  let transformed = 0;
   const input = entities.map((value) => {
     const entity = { ...value };
-    let changed = false;
     if (legacy && entity.kind !== oldSchema.context.kind && (entity.host !== undefined || entity.path !== undefined)) {
       entity.locations = [...(entity.locations || []), {
         ...(entity.host ? { host: entity.host } : {}),
@@ -33,19 +37,27 @@ export function migrateEntities(entities, binding, oldSchema, schema) {
       delete entity.host;
       delete entity.path;
       delete entity.updated_at;
-      changed = true;
     }
     // Old starter's document records remain ordinary resources in the new default model.
     if (legacy && binding.preset === "starter" && entity.kind === "document" && !schema.kinds.document) {
       entity.kind = "item";
       delete entity.updated_at;
-      changed = true;
     }
-    if (changed) transformed += 1;
     return entity;
   });
   try {
-    return { entities: validateEntitySet(input, schema), transformed };
+    const normalized = validateEntitySet(input, schema);
+    let transformed = 0;
+    for (let index = 0; index < normalized.length; index += 1) {
+      const { updated_at: _oldRevision, ...before } = entities[index];
+      const { updated_at: _newRevision, ...after } = normalized[index];
+      // Compare facts without treating YAML/JSON key order as a change.
+      if (JSON.stringify(canonical(before)) !== JSON.stringify(canonical(after))) {
+        delete normalized[index].updated_at;
+        transformed += 1;
+      }
+    }
+    return { entities: normalized, transformed };
   } catch (error) {
     throw new Error(`configuration cannot be applied without changing saved data: ${error.message}. Restore the definition or explicitly migrate the affected records; no data changed.`);
   }
@@ -67,9 +79,23 @@ export async function initializeRegistry(config, schema, { dryRun = false } = {}
     await initDb(config.databasePath, schema);
     return { created: true, count: 0, transformed: 0 };
   }
-  const db = openDatabase(config.databasePath);
+  const db = openDatabase(config.databasePath, { readOnly: dryRun });
   try {
-    return await withWriteTransaction(db, async () => {
+    const apply = async () => {
+      assertSupportedDatabase(db);
+      const binding = readSchemaBinding(db);
+      const indexed = db.prepare("SELECT count(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('entity_lookup', 'entity_locations')").get().count === 2;
+      if (binding?.preset_hash === schema.hash && indexed && binding.indexes_version === 2) {
+        const { source: _source, hash: _hash, core_fields: _coreFields, ...model } = schema;
+        const metadataChanged = JSON.stringify(readStoredModel(db)) !== JSON.stringify(model);
+        const count = db.prepare("SELECT count(*) AS count FROM entities").get().count;
+        if (!dryRun && metadataChanged) {
+          const backupPath = await backupDatabase(config.databasePath, config);
+          writeSchemaBinding(db, schema);
+          return { count, transformed: 0, adopted: false, backupPath };
+        }
+        return { count, transformed: 0, adopted: false };
+      }
       const result = plan(db, schema);
       if (dryRun) return { count: result.entities.length, transformed: result.transformed, adopted: result.binding.preset_hash !== schema.hash };
       const adopted = result.binding.preset_hash !== schema.hash;
@@ -78,7 +104,10 @@ export async function initializeRegistry(config, schema, { dryRun = false } = {}
       db.exec(schemaSql);
       await replaceEntities(result.entities, db, schema);
       return { count: result.entities.length, transformed: result.transformed, adopted, backupPath };
-    });
+    };
+    if (!dryRun) return await withWriteTransaction(db, apply);
+    db.exec("BEGIN");
+    try { return await apply(); } finally { db.exec("ROLLBACK"); }
   } finally {
     db.close();
   }

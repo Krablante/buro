@@ -60,13 +60,21 @@ function parseArgs(argv) {
       args.push(token);
       continue;
     }
-    const name = token.slice(2).replaceAll("-", "_");
+    const equal = token.indexOf("=");
+    const name = token.slice(2, equal === -1 ? undefined : equal).replaceAll("-", "_");
     if (["help", "version", "dry_run", "brief", "full", "adopt"].includes(name)) {
+      if (equal !== -1) throw new Error(`${token.slice(0, equal)} does not take a value`);
       options[name] = true;
       continue;
     }
+    if (equal !== -1) {
+      const value = token.slice(equal + 1);
+      if (!value) throw new Error(`${token.slice(0, equal)} requires a value`);
+      options[name] = value;
+      continue;
+    }
     const next = argv[index + 1];
-    if (!next || next.startsWith("--")) options[name] = true;
+    if (!next || next.startsWith("--")) throw new Error(`${token} requires a value`);
     else { options[name] = next; index += 1; }
   }
   return { args, options };
@@ -139,7 +147,7 @@ async function getEntityOrNull(client, id) {
   try {
     return await client.entity(id);
   } catch (error) {
-    if (error instanceof Error && /not found/i.test(error.message)) return null;
+    if (error?.status === 404) return null;
     throw error;
   }
 }
@@ -287,7 +295,17 @@ export async function runCli(argv = process.argv.slice(2)) {
     return 0;
   }
 
-  const config = loadConfig();
+  if (options.help || !args.length || args[0] === "help") {
+    rejectOptions(options, ["help"]);
+    process.stdout.write(renderUsage());
+    return 0;
+  }
+  const limits = { connect: 2, agent: 1, init: 1, backup: 1, serve: 1, export: 2, import: 2, current: 1, list: 2, search: 2, schema: 2, get: 2 };
+  const limit = args[0] === "types" ? (args[1] === "copy" ? 4 : 2)
+    : args[0] === "draft" ? (args[1] === "new" ? 4 : ["pull", "delete"].includes(args[1]) ? 3 : 2)
+      : limits[args[0]] ?? 1;
+  if (args.length > limit) throw new Error(`unexpected argument: ${args[limit]}; use buro help for command syntax`);
+
   const command = args[0];
   if (command === "agent") {
     rejectOptions(options, ["full"]);
@@ -300,15 +318,25 @@ export async function runCli(argv = process.argv.slice(2)) {
     console.log(`BURO connected:\n${files.join("\n")}\nStart a new agent session; restart OpenCode/OpenCodez after plugin installation.`);
     return 0;
   }
-  const direct = hasDirectStorage(config);
-  const localSchema = direct ? loadSchema(config) : null;
-
-  if (options.help) {
-    rejectOptions(options, ["help"]);
-    const schema = direct ? localSchema : await dataClient(config, localSchema).schema();
-    process.stdout.write(renderUsage(schema));
+  if (command === "types" && args[1] === "copy") {
+    rejectOptions(options);
+    const { filePath } = loadTypeDefinition(requireArg(args[2], "types copy requires a built-in type"));
+    const target = path.resolve(requireArg(args[3], "types copy requires a destination YAML file"));
+    if (existsSync(target)) throw new Error(`file already exists: ${target}`);
+    await mkdir(path.dirname(target), { recursive: true });
+    await copyFile(filePath, target);
+    console.log(`Type definition copied: ${target}\nSelect it in config.json type_files instead of the built-in name, then run buro init --dry-run and buro init.`);
     return 0;
   }
+  const config = loadConfig();
+  if (command === "backup") {
+    rejectOptions(options);
+    requireDirectStorage(command, config);
+    console.log(`BURO backup created: ${await backupDatabase(config.databasePath, config)}`);
+    return 0;
+  }
+  const direct = hasDirectStorage(config);
+  const localSchema = direct ? loadSchema(config) : null;
 
   if (command === "init") {
     rejectOptions(options, ["dry_run"]);
@@ -327,12 +355,6 @@ export async function runCli(argv = process.argv.slice(2)) {
       console.log(`Configuration: ${config.configPath}`);
     }
     if (result.adopted) console.log(options.dry_run ? "Definitions can be adopted after complete saved-record validation." : "Definitions validated against all saved records and adopted.");
-    return 0;
-  }
-  if (command === "backup") {
-    rejectOptions(options);
-    requireDirectStorage(command, config);
-    console.log(`BURO backup created: ${await backupDatabase(config.databasePath, config)}`);
     return 0;
   }
   if (command === "serve") {
@@ -365,24 +387,14 @@ export async function runCli(argv = process.argv.slice(2)) {
 
   rejectOptions(options, command === "current" ? ["brief"] : ["list", "search"].includes(command) ? ["limit", "offset"] : []);
   const client = dataClient(config, localSchema);
-  const schema = direct ? localSchema : await client.schema();
-  if (!command || command === "help") {
-    process.stdout.write(renderUsage(schema));
-    return 0;
-  }
+  const needsSchema = !command || ["help", "schema", "types", "draft", "current"].includes(command);
+  const schema = direct ? localSchema : needsSchema ? await client.schema() : null;
   if (command === "schema") {
     process.stdout.write(args[1] ? renderKindSchema(schema, args[1]) : renderSchemaSummary(schema));
     return 0;
   }
   if (command === "types") {
-    if (args[1] === "copy") {
-      const { filePath } = loadTypeDefinition(requireArg(args[2], "types copy requires a built-in type"));
-      const target = path.resolve(requireArg(args[3], "types copy requires a destination YAML file"));
-      if (existsSync(target)) throw new Error(`file already exists: ${target}`);
-      await mkdir(path.dirname(target), { recursive: true });
-      await copyFile(filePath, target);
-      console.log(`Type definition copied: ${target}\nSelect it in config.json type_files instead of the built-in name, then run buro init --dry-run and buro init.`);
-    } else process.stdout.write(args[1] ? renderKindSchema(schema, args[1]) : `${[
+    process.stdout.write(args[1] ? renderKindSchema(schema, args[1]) : `${[
       "BURO record types",
       `default: ${schema.default_kind}`,
       ...Object.entries(schema.kinds).map(([name, definition]) => `- ${name}${definition.label ? ` — ${definition.label}` : ""}`),
@@ -391,7 +403,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   }
   if (command === "list" || command === "search") {
     const kind = command === "list" ? args[1] : undefined;
-    if (kind && !schema.kinds[kind]) throw new Error(`unsupported entity kind: ${kind}`);
+    if (kind && schema && !Object.hasOwn(schema.kinds, kind)) throw new Error(`unsupported entity kind: ${kind}`);
     const limit = Number(options.limit ?? 100);
     const offset = Number(options.offset ?? 0);
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000 || !Number.isInteger(offset) || offset < 0) throw new Error("limit must be 1..1000; offset must be nonnegative");

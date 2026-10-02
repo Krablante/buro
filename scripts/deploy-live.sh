@@ -1,237 +1,161 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BURO_ROOT=${BURO_ROOT:-$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")}
-PACK_DIR=${PACK_DIR:-/tmp/opencodez}
-BURO_SERVER_HOST=${BURO_SERVER_HOST:-$(hostname -s)}
-BURO_API_PORT=${BURO_API_PORT:-8765}
-BURO_INSTANCE_ROOT=${BURO_INSTANCE_ROOT:-$(dirname "$BURO_ROOT")}
-
-if [ ! -d "$BURO_ROOT/.git" ]; then
-  printf 'Politia deployment requires the BURO source checkout: %s\n' "$BURO_ROOT" >&2
+# Politia's Linux rollout. BURO_ROOT belongs to the instance, never the checkout.
+source_root=${BURO_SOURCE_ROOT:-$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")}
+sync_workers=1
+dry_run=${BURO_DEPLOY_DRY_RUN:-0}
+for option in "$@"; do
+  case "$option" in
+    --skip-workers) sync_workers=0 ;;
+    --dry-run) dry_run=1 ;;
+    -h|--help)
+      printf '%s\n' 'Usage: scripts/deploy-live.sh [--skip-workers] [--dry-run]' \
+        'Uses existing central and worker config.json files; never replaces them.' \
+        'Environment: BURO_SOURCE_ROOT, PACK_DIR, BURO_WORKER_HOSTS, BURO_WORKER_PREFIX (default /usr), BURO_DEPLOY_DRY_RUN.'
+      exit 0 ;;
+    *) printf 'unsupported option: %s\n' "$option" >&2; exit 2 ;;
+  esac
+done
+if [ ! -d "$source_root/.git" ]; then
+  printf 'Politia deployment requires a BURO source checkout: %s\n' "$source_root" >&2
   exit 1
 fi
-
-discover_workers() {
-  command -v buro >/dev/null 2>&1 || return 0
-  while read -r kind host _; do
-    if [ "$kind" = "host" ] && [ -n "$host" ] && [ "$host" != "$BURO_SERVER_HOST" ]; then
-      printf '%s ' "$host"
-    fi
-  done < <(buro list host --limit 1000)
-}
-
-BURO_WORKER_HOSTS=${BURO_WORKER_HOSTS:-$(discover_workers)}
-
-sync_workers=1
-restart_api=1
-dry_run=${BURO_DEPLOY_DRY_RUN:-0}
-deployed_workers=()
-unavailable_workers=()
-failed_workers=()
-api_stopped=0
-tarball=""
-rollback_dir=""
+cd "$source_root"
+version=$(node -p "require('./package.json').version")
+state_dir=$(node --input-type=module -e 'import {loadConfig} from "./src/config.js"; const c=loadConfig(); if(c.mode === "client") throw new Error("run deployment on the central host"); console.log(c.stateDir)')
+database_path=$(node --input-type=module -e 'import {loadConfig} from "./src/config.js"; console.log(loadConfig().databasePath)')
+server_host=$(node --input-type=module -e 'import {loadConfig} from "./src/config.js"; console.log(loadConfig().currentContext)')
+api_url=$(node --input-type=module -e 'import {loadConfig} from "./src/config.js"; const u=new URL(loadConfig().apiUrl); u.hostname="127.0.0.1"; console.log(u.href.replace(/\/$/, ""))')
+pack_dir=${PACK_DIR:-$state_dir/deployments/$version-$(date -u +%Y%m%dT%H%M%SZ)}
+tarball="$pack_dir/buro-$version.tgz"
+worker_prefix=${BURO_WORKER_PREFIX:-/usr}
+if [[ ! "$worker_prefix" =~ ^/[a-zA-Z0-9_./-]+$ ]]; then printf 'Invalid worker prefix: %s\n' "$worker_prefix" >&2; exit 1; fi
+node_bin_dir=$(dirname "$(command -v node)")
+sudo_node_path="$node_bin_dir:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 previous_package=""
 previous_snapshot=""
-database_path=""
+api_stopped=0
 central_pending=0
+unavailable_workers=()
+failed_workers=()
+deployed_workers=()
 
-restore_api() {
-  if [ "$api_stopped" -eq 1 ] && [ "$dry_run" -eq 0 ]; then
-    systemctl --user restart buro-api.service || true
+run() {
+  printf '+ '; printf '%q ' "$@"; printf '\n'
+  if [ "$dry_run" -eq 0 ]; then "$@"; fi
+}
+
+run_check() {
+  printf '+ '; printf '%q ' "$@"; printf '\n'
+  if [ "$dry_run" -eq 0 ]; then
+    local output
+    if ! output=$("$@" 2>&1); then printf '%s\n' "$output" >&2; return 1; fi
   fi
 }
 
 finish() {
   local status=$?
-  if [ "$status" -ne 0 ] && [ "$central_pending" -eq 1 ] && [ -n "$previous_package" ]; then
-    printf 'Central upgrade failed; restoring the previous package and SQLite snapshot.\n' >&2
-    systemctl --user stop buro-api.service || true
-    sudo -n env "PATH=$sudo_node_path" npm install -g "$previous_package" --prefix /usr/local || true
-    if [ -n "$previous_snapshot" ]; then cp "$previous_snapshot" "$database_path"; fi
-    if [ -f "$rollback_dir/config.json" ]; then cp "$rollback_dir/config.json" "$HOME/.config/buro/config.json"; fi
-    api_stopped=1
+  trap - EXIT
+  if [ "$status" -ne 0 ] && [ "$central_pending" -eq 1 ]; then
+    printf 'Central verification failed; restoring the previous package and snapshot.\n' >&2
+    if systemctl --user stop buro-api.service; then
+      api_stopped=1
+      if sudo -n env "PATH=$sudo_node_path" npm install -g "$previous_package" --prefix /usr/local \
+        && cp "$previous_snapshot" "$database_path"; then
+        printf 'Previous installation restored.\n' >&2
+      else
+        printf 'Recovery failed; API left stopped. Package: %s; snapshot: %s\n' "$previous_package" "$previous_snapshot" >&2
+        api_stopped=0
+      fi
+    else
+      printf 'Could not stop API for recovery; installation left in place.\n' >&2
+      api_stopped=0
+    fi
   fi
-  restore_api
-  if [ "$dry_run" -eq 0 ] && [ -n "$tarball" ]; then printf 'Package retained: %s\n' "$tarball"; fi
+  if [ "$api_stopped" -eq 1 ]; then systemctl --user restart buro-api.service || status=1; fi
+  if [ "$dry_run" -eq 0 ] && [ -f "$tarball" ]; then
+    # A durable continuation record, including interrupted rollouts.
+    node --input-type=module - "$pack_dir/pending.json" "$tarball" "$status" "$previous_package" "$previous_snapshot" \
+      "${unavailable_workers[*]}" "${failed_workers[*]}" "${deployed_workers[*]}" <<'JS'
+import {writeFileSync, readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+const [target, pkg, status, previous_package, previous_snapshot, offline, failed, deployed] = process.argv.slice(2);
+const hosts = text => text ? text.split(' ') : [];
+writeFileSync(target, JSON.stringify({package:pkg, sha256:createHash('sha256').update(readFileSync(pkg)).digest('hex'),
+  status:Number(status), previous_package, previous_snapshot, unavailable:hosts(offline), failed:hosts(failed), deployed:hosts(deployed)}, null, 2)+'\n', {mode:0o600});
+JS
+    printf 'Package and rollout record retained: %s\n' "$pack_dir"
+  fi
+  exit "$status"
 }
-
 trap finish EXIT
 
-usage() {
-  cat <<'EOF'
-Usage: scripts/deploy-live.sh [options]
-
-Build and deploy BURO live runtime from the canonical source tree.
-
-Options:
-  --skip-workers     Do not install the package on worker hosts
-  --skip-api-restart Do not restart buro-api.service on the central host
-  --dry-run          Print commands without executing them
-  -h, --help         Show this help
-
-Environment:
-  BURO_ROOT          Source tree, default parent of this script directory
-  PACK_DIR           Tarball output dir, default /tmp/opencodez
-  BURO_WORKER_HOSTS  Space-separated workers, default from `buro list host`
-  BURO_SERVER_HOST   Central API hostname, default current short hostname
-  BURO_API_PORT      Central API port, default 8765
-  BURO_INSTANCE_ROOT Central instance root, default parent of BURO_ROOT
-  BURO_DEPLOY_DRY_RUN Set to 1 to print commands without executing them
-EOF
-}
-
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --skip-workers) sync_workers=0 ;;
-    --skip-api-restart) restart_api=0 ;;
-    --dry-run) dry_run=1 ;;
-    -h|--help) usage; exit 0 ;;
-    *) printf 'unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
-  esac
-  shift
+workers=${BURO_WORKER_HOSTS:-$(buro list host --limit 1000)}
+if [ -z "${BURO_WORKER_HOSTS:-}" ]; then
+  worker_ids=()
+  while read -r kind id _; do
+    if [ "$kind" = host ] && [ "$id" != "$server_host" ]; then worker_ids+=("$id"); fi
+  done <<< "$workers"
+  workers="${worker_ids[*]}"
+fi
+for host in $workers; do
+  if [[ ! "$host" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+    printf 'Invalid SSH worker name: %s\n' "$host" >&2; exit 1
+  fi
 done
 
-log() {
-  printf '\n==> %s\n' "$*"
-}
-
-run() {
-  printf '+ '
-  printf '%q ' "$@"
-  printf '\n'
-  if [ "$dry_run" -eq 0 ]; then
-    "$@"
-  fi
-}
-
-run_shell() {
-  printf '+ %s\n' "$*"
-  if [ "$dry_run" -eq 0 ]; then
-    bash -lc "$*"
-  fi
-}
-
-require_file() {
-  if [ ! -f "$1" ]; then
-    printf 'missing required file: %s\n' "$1" >&2
-    exit 1
-  fi
-}
-
-cd "$BURO_ROOT"
-require_file package.json
-
-package_name=$(node -p "const p=require('./package.json'); p.name + '-' + p.version + '.tgz'")
-politia_version=$(node -p "require('js-yaml').load(require('node:fs').readFileSync('./presets/politia.yaml', 'utf8')).version")
-tarball="$PACK_DIR/$package_name"
-node_bin_dir=$(dirname "$(command -v node)")
-sudo_node_path="$node_bin_dir:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-
-log "verify README terminal demos"
-run npm run demos:check
-
-log "pack"
-run mkdir -p "$PACK_DIR"
-run npm pack --pack-destination "$PACK_DIR"
+run env BURO_MODE=local node src/cli.js init --dry-run
+run mkdir -p "$pack_dir"
+run npm pack --pack-destination "$pack_dir"
 if [ "$dry_run" -eq 0 ]; then
-  require_file "$tarball"
-fi
-
-log "preview central migration before installing"
-run env BURO_MODE=local BURO_PRESET=politia "BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST" node src/cli.js init --dry-run
-if [ "$dry_run" -eq 0 ] && [ "$restart_api" -eq 1 ]; then
-  rollback_dir=$(mktemp -d "$PACK_DIR/buro-upgrade.XXXXXX")
-  cp "$HOME/.config/buro/config.json" "$rollback_dir/config.json"
-  database_path=$(node --input-type=module -e 'import {loadConfig} from "./src/config.js"; console.log(loadConfig().databasePath)')
-  systemctl --user stop buro-api.service
-  api_stopped=1
-  previous_snapshot=$(buro backup | sed -n 's/^BURO backup created: //p')
+  rollback_dir=$(mktemp -d "$pack_dir/rollback.XXXXXX")
   previous_name=$(npm pack /usr/local/lib/node_modules/buro --pack-destination "$rollback_dir" --quiet)
   previous_package="$rollback_dir/$previous_name"
+  systemctl --user stop buro-api.service
+  api_stopped=1
+  snapshot_output=$(buro backup)
+  snapshot_source=${snapshot_output#BURO backup created: }
+  test -f "$snapshot_source"
+  previous_snapshot="$rollback_dir/before.sqlite3"
+  cp "$snapshot_source" "$previous_snapshot"
   central_pending=1
 fi
-
-log "install on central live runtime"
-central_config=$(printf '{"mode":"central","preset":"politia","current_context":"%s","central_host":"%s","api_url":"http://127.0.0.1:%s","instance_root":"%s"}' \
-  "$BURO_SERVER_HOST" "$BURO_SERVER_HOST" "$BURO_API_PORT" "$BURO_INSTANCE_ROOT")
-run mkdir -p "$HOME/.config/buro"
-run_shell "umask 077 && printf '%s\\n' '$central_config' > '$HOME/.config/buro/config.json'"
 run sudo -n env "PATH=$sudo_node_path" npm install -g "$tarball" --prefix /usr/local
-
-if [ "$restart_api" -eq 1 ]; then
-  log "validate central entities, adopt the active preset, and restart live API"
-  run systemctl --user stop buro-api.service
-  api_stopped=1
-  run env BURO_MODE=local BURO_PRESET=politia "BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST" buro init
-  run systemctl --user restart buro-api.service
-  api_stopped=0
-  run systemctl --user is-active buro-api.service
-  run curl -fsS --retry 5 --retry-connrefused --retry-delay 1 --max-time 3 "http://127.0.0.1:$BURO_API_PORT/health"
+run env BURO_MODE=local buro init
+run systemctl --user restart buro-api.service
+if [ "$dry_run" -eq 0 ]; then api_stopped=0; fi
+run systemctl --user is-active buro-api.service
+# Keep the rollback boundary open through actual CLI and HTTP verification.
+run buro --version
+run_check buro buro
+run_check buro current --brief
+run_check env BURO_MODE=client "BURO_API_URL=$api_url" buro buro
+if [ "$dry_run" -eq 0 ]; then
+  test "$(buro --version)" = "$version"
+  node --input-type=module -e 'const r=await fetch(process.argv[1]+"/health", {signal:AbortSignal.timeout(3000)}); const h=await r.json(); if(!r.ok || !h.ok) throw new Error(JSON.stringify(h)); console.log("Central API healthy; records:", h.entity_count)' "$api_url"
   central_pending=0
 fi
+run buro connect opencodez
 
 if [ "$sync_workers" -eq 1 ]; then
-  log "install on worker hosts"
-  for host in $BURO_WORKER_HOSTS; do
+  for host in $workers; do
     if [ "$dry_run" -eq 0 ] && ! ssh -o BatchMode=yes -o ConnectTimeout=3 "$host" true; then
-      log "worker unavailable, skipped: $host"
       unavailable_workers+=("$host")
       continue
     fi
-    if ! run scp "$tarball" "$host:/tmp/$package_name"; then
-      failed_workers+=("$host")
-      continue
-    fi
-    if ! run ssh "$host" "sudo -n npm install -g /tmp/$package_name --prefix /usr"; then
-      failed_workers+=("$host")
-      continue
-    fi
-    if ! run ssh "$host" rm -f "/tmp/$package_name"; then
-      failed_workers+=("$host")
-      continue
-    fi
-    if [ "$dry_run" -eq 0 ]; then
-      if ! remote_home=$(ssh "$host" 'printf %s "$HOME"'); then
-        failed_workers+=("$host")
-        continue
-      fi
-    else
-      remote_home="~"
-    fi
-    client_config=$(printf '{"mode":"client","current_context":"%s","central_host":"%s","api_url":"http://%s:%s","instance_root":"%s/politia"}' \
-      "$host" "$BURO_SERVER_HOST" "$BURO_SERVER_HOST" "$BURO_API_PORT" "$remote_home")
-    if ! run ssh "$host" "mkdir -p ~/.config/buro && umask 077 && printf '%s\\n' '$client_config' > ~/.config/buro/config.json"; then
+    # Existing clients keep their instance/draft paths and endpoint settings.
+    if ! run ssh "$host" 'test -f "$HOME/.config/buro/config.json"' \
+      || ! run scp "$tarball" "$host:/tmp/buro-$version.tgz" \
+      || ! run ssh "$host" "sudo -n npm install -g /tmp/buro-$version.tgz --prefix $worker_prefix" \
+      || ! run_check ssh "$host" "test \"\$(buro --version)\" = '$version' && buro buro && buro current --brief && buro connect opencodez" \
+      || ! run ssh "$host" rm -f "/tmp/buro-$version.tgz"; then
       failed_workers+=("$host")
       continue
     fi
     deployed_workers+=("$host")
   done
 fi
-
-log "verify live preset and guided packet format"
-run_shell "BURO_MODE=local BURO_PRESET=politia BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST buro schema | grep -F 'BURO schema: politia v$politia_version'"
-run_shell "BURO_MODE=local BURO_PRESET=politia BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST buro buro | grep -E 'BURO Entity:|Context:'"
-run_shell "BURO_MODE=local BURO_PRESET=politia BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST buro buro | grep -E '^  # [a-z_]+ — ' >/dev/null"
-run_shell "BURO_MODE=client BURO_CURRENT_CONTEXT=worker BURO_CENTRAL_HOST=$BURO_SERVER_HOST BURO_API_URL=http://127.0.0.1:$BURO_API_PORT buro buro | grep -E 'BURO Entity:|Context:'"
-run_shell "BURO_MODE=client BURO_CURRENT_CONTEXT=worker BURO_CENTRAL_HOST=$BURO_SERVER_HOST BURO_API_URL=http://127.0.0.1:$BURO_API_PORT buro buro | grep -E '^  # [a-z_]+ — ' >/dev/null"
-run_shell "BURO_MODE=local BURO_PRESET=politia BURO_CURRENT_CONTEXT=$BURO_SERVER_HOST buro $BURO_SERVER_HOST | grep -E 'BURO Entity:|Context:'"
-
-if [ "$sync_workers" -eq 1 ]; then
-  for host in "${deployed_workers[@]}"; do
-    run_shell "ssh $host 'buro buro | grep -E '\''BURO Entity:|Context:'\'''"
-    run_shell "ssh $host 'buro buro | grep -E '\''^  # [a-z_]+ — '\'' >/dev/null'"
-  done
-fi
-
-if [ "${#unavailable_workers[@]}" -gt 0 ]; then
-  log "workers left unchanged: ${unavailable_workers[*]}"
-fi
-
-if [ "${#failed_workers[@]}" -gt 0 ]; then
-  printf 'worker deployment failed: %s\n' "${failed_workers[*]}" >&2
-  exit 1
-fi
-
-log "BURO live deploy ok"
+if [ "${#unavailable_workers[@]}" -gt 0 ]; then printf 'Offline, pending: %s\n' "${unavailable_workers[*]}"; fi
+if [ "${#failed_workers[@]}" -gt 0 ]; then printf 'Worker rollout failed: %s\n' "${failed_workers[*]}" >&2; exit 1; fi
+printf 'BURO rollout verified%s.\n' "$([ "$dry_run" -eq 1 ] && printf ' (preview)' || true)"
