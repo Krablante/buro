@@ -39,8 +39,10 @@ device membership uses a derived locations index. These indexes are updated in
 the same transaction as canonical data. Exact ID reads do not scan the memory.
 List/search use bounded identity projections. Substring search may scan lookup
 keys; it does not inspect record bodies or claim semantic retrieval. Large
-offsets walk skipped index entries. Type format changes validate affected records
-one at a time before adoption; label/guide changes do not scan records. Ordinary record writes do not enumerate the registry unless incoming
+offsets walk skipped index entries. Current may sort matching identities before
+applying its output limit. Type format changes validate affected records
+one at a time before adoption; label/guide changes do not scan records. Ordinary
+record writes do not enumerate the registry unless incoming
 refs need checking. Whole-memory export/import is intentionally proportional
 to the full memory size and holds its complete manifest in memory.
 
@@ -50,6 +52,11 @@ the resolver queues writes inside one server process. Read definitions are loade
 from the saved model, so an invalid proposal never blocks the accepted model.
 The HTTP server reads current definitions rather than pinning them until restart.
 No second registry, worker DB copies, RAG store, or background model is involved.
+
+Every changed write also copies the complete database for its mandatory snapshot.
+This is the main cost that grows with saved content; bounded query results do not
+make writes constant-time. Keep high-frequency logs and large binary data outside
+BURO and store their useful facts and locations instead.
 
 ## HTTP
 
@@ -74,6 +81,15 @@ uses value:null. Both endpoints require v3 revision/generation metadata. Conflic
 return HTTP 409. JSON request bodies are limited to 1 MiB. There are no unchecked
 record PUT/DELETE routes. The API has no auth or TLS; see operation boundaries
 before exposing it.
+
+## Documentation languages
+
+English uses the unsuffixed Markdown filename; translations use the same name
+with a language suffix, such as `model.ru.md` or `model.uk.md`. Keep each guide's
+language links and the README navigation table in sync. Adding a language needs
+no runtime or build change. Translate the same topics and behavior naturally.
+Type guides and integration resources are instructions used directly by agents;
+keep their behavior consistent with the human guides.
 
 ## Packaging and release
 

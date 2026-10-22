@@ -16,8 +16,9 @@ BURO never selects or rewrites your System prompt.
 | codex | ~/.agents/skills/buro/SKILL.md; ~/.codex/hooks/buro-session-start.cjs; hooks.json | SessionStart command hook |
 | claude | ~/.claude/skills/buro/SKILL.md; hooks/buro-session-start.cjs; settings.json | SessionStart command hook |
 
-Run `buro connect <target>`. `--path <profile>` chooses another profile directory;
-its skill then goes under that profile's skills directory. Unrelated hooks and
+Run `buro connect <target>`. For OpenCode/OpenCodez, `OPENCODE_CONFIG_DIR` selects
+the profile when set; `--path <profile>` takes precedence. An explicit profile's
+skill goes under its skills directory. Unrelated hooks and
 settings are retained. Files changed by connect receive a backup; unchanged
 connections are not rewritten. A conflicting unmanaged skill or plugin is
 reported instead of overwritten. Old BURO-managed instruction blocks in Codex

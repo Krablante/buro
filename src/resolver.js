@@ -93,7 +93,7 @@ export async function resolvePacketText(id, options = {}) {
 export async function resolveCurrentContext(options = {}) {
   const config = optionsFor(options);
   const host = await resolveContext(config.currentContext, config);
-  const aliases = host && Array.isArray(host.aliases) ? host.aliases : [];
+  const aliases = host && fieldDefinition(config.schema, host.kind, "aliases")?.type === "string-list" ? host.aliases || [] : [];
   const limit = config.currentLimit;
   const members = await listMemberSummaries(host?.id || config.currentContext, config.database, config.schema, aliases, limit);
   return { context: { id: host?.id || config.currentContext }, packet: host ? entityPacket(host, config.schema) : null, members: members.slice(0, limit), truncated: members.length > limit, limit };

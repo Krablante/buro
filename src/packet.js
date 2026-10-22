@@ -8,6 +8,14 @@ function visibleFields(entity, schema) {
   ));
 }
 
+function packetValue(value, field) {
+  if (field.type === "record-list") return value.map(entry => packetValue(entry, { ...field, type: "record" }));
+  if (field.type === "record") return Object.fromEntries(Object.entries(value)
+    .filter(([name]) => field.fields[name].packet !== false)
+    .map(([name, nested]) => [name, packetValue(nested, field.fields[name])]));
+  return value;
+}
+
 export function entityPacket(entity, schema) {
   const sections = [];
   const bySection = new Map();
@@ -20,7 +28,7 @@ export function entityPacket(entity, schema) {
       sections.push(section);
     }
     const guide = fieldDefinition(schema, entity.kind, name).guide;
-    bySection.get(sectionName).fields.push({ name, ...(guide ? { guide } : {}), value: entity[name] });
+    bySection.get(sectionName).fields.push({ name, ...(guide ? { guide } : {}), value: packetValue(entity[name], fieldDefinition(schema, entity.kind, name)) });
   }
   return {
     id: entity.id,

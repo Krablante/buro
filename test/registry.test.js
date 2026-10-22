@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile, readdir, rm, mkdir, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { initializeRegistry } from "../src/migration.js";
-import { loadSchema, typeDefinition } from "../src/schema.js";
+import { loadSchema, normalizeEntity, schemaFromTypes, typeDefinition } from "../src/schema.js";
 import { draftMetadata, readDraft, dump } from "../src/draft.js";
 import { applyChange, resolveEntity, resolveCurrentContext } from "../src/resolver.js";
 import { createApiServer } from "../src/api.js";
@@ -16,7 +16,7 @@ import { exportRegistry, importRegistry, restoreRegistry } from "../src/registry
 import { connectAgent } from "../src/agent.js";
 import { scheduledBackup } from "../src/backup.js";
 import { renderCurrentContext } from "../src/cli-output.js";
-import { renderPacket } from "../src/packet.js";
+import { entityPacket, renderPacket } from "../src/packet.js";
 
 async function instance(t) {
   const root = await mkdtemp(path.join(tmpdir(), "buro-test-"));
@@ -139,6 +139,9 @@ test("backup failure cancels mutation; export/import and restore preserve types 
   const preview = await importRegistry(file, config, { dryRun: true });
   assert.equal(preview.count, 1);
   assert.equal(await resolveEntity("one", config), null);
+  await assert.rejects(restoreRegistry(snapshot, { ...config, configPath: path.join(blocked, "config.json") }));
+  assert.equal(await resolveEntity("one", config), null);
+  assert.equal(loadSchema(config).generation, old.generation);
   await restoreRegistry(snapshot, config);
   assert.equal((await resolveEntity("one", config)).name, "One");
   assert.notEqual(loadSchema(config).generation, old.generation);
@@ -269,4 +272,79 @@ test("plugin coalesces concurrent requests once per session and surfaces failure
   const failed = { system: [] };
   await hooks["experimental.chat.system.transform"]({ sessionID: "failed" }, failed);
   assert.match(failed.system[0], /BURO unavailable: fixture unavailable/);
+  const hook = () => JSON.parse(spawnSync(process.execPath, [new URL("../integrations/session-start.cjs", import.meta.url).pathname], { encoding: "utf8" }).stdout).hookSpecificOutput.additionalContext;
+  assert.match(hook(), /BURO unavailable: fixture unavailable/);
+  await writeFile(path.join(bin, "buro"), `#!${process.execPath}\nconsole.log('unexpected old output');\n`);
+  assert.match(hook(), /BURO unavailable: current returned no device context/);
+});
+
+test("packets filter nested fields without changing stored values", () => {
+  const schema = schemaFromTypes([{ id: "book", fields: {
+    details: { type: "record", fields: { title: { type: "string" }, private_note: { type: "string", packet: false } } },
+    editions: { type: "record-list", fields: { year: { type: "integer" }, internal: { type: "record", packet: false, fields: { code: { type: "string" } } } } },
+  } }]);
+  const entity = normalizeEntity({ id: "book", name: "Book", kind: "book", details: { title: "Public", private_note: "Hidden" }, editions: [{ year: 2026, internal: { code: "Hidden" } }] }, schema);
+  const packet = entityPacket(entity, schema);
+  assert.deepEqual(packet.sections[0].fields.map(field => field.value), [{ title: "Public" }, [{ year: 2026 }]]);
+  assert.equal(entity.details.private_note, "Hidden");
+  assert.equal(entity.editions[0].internal.code, "Hidden");
+});
+
+test("record lists reject empty entries instead of accepting unreadable data", () => {
+  const schema = schemaFromTypes([{ id: "book", fields: { entries: { type: "record-list", fields: { title: { type: "string" } } } } }]);
+  for (const entry of [null, undefined, ""]) assert.throws(() => normalizeEntity({ id: "book", name: "Book", kind: "book", entries: [entry] }, schema), /entries\[0\].*object/);
+});
+
+test("current ignores an aliases field with a custom format", async t => {
+  const { config, root } = await instance(t);
+  const manifest = { format: "buro-registry", version: 3, default_kind: "host", retired_ids: [],
+    types: [{ id: "host", fields: { aliases: { type: "record-list", fields: { label: { type: "string" } } } } }],
+    entities: [{ id: "desk", name: "Desk", kind: "host", aliases: [{ label: "Custom data" }] }] };
+  const file = path.join(root, "custom.yaml"); await writeFile(file, dump(manifest));
+  await importRegistry(file, config);
+  assert.equal((await resolveCurrentContext(config)).context.id, "desk");
+});
+
+test("connect respects an explicit OpenCode profile environment", async t => {
+  const { root } = await instance(t);
+  const prior = process.env.OPENCODE_CONFIG_DIR;
+  const profile = path.join(root, "selected-profile");
+  process.env.OPENCODE_CONFIG_DIR = profile;
+  t.after(() => { if (prior === undefined) delete process.env.OPENCODE_CONFIG_DIR; else process.env.OPENCODE_CONFIG_DIR = prior; });
+  await connectAgent("opencodez", { home: root });
+  assert.ok(existsSync(path.join(profile, "plugins/buro.js")));
+  assert.equal(existsSync(path.join(root, ".config/opencodez")), false);
+});
+
+test("concurrent initialization preserves the same usable memory and failed init can retry", async t => {
+  const { config, root } = await instance(t);
+  const fresh = { ...config, databasePath: path.join(root, "concurrent.sqlite3") };
+  const initialized = await Promise.allSettled([initializeRegistry(fresh), initializeRegistry(fresh)]);
+  assert.deepEqual(initialized.map(result => result.status), ["fulfilled", "fulfilled"]);
+  assert.ok(loadSchema(fresh).generation);
+  const blocked = path.join(root, "blocked-config"); await writeFile(blocked, "file");
+  const retry = { ...config, databasePath: path.join(root, "retry.sqlite3"), configPath: path.join(blocked, "config.json") };
+  await assert.rejects(initializeRegistry(retry));
+  await initializeRegistry({ ...retry, configPath: config.configPath });
+  assert.ok(loadSchema(retry).generation);
+});
+
+test("separate CLI processes serialize writes and reject a racing stale draft", async t => {
+  const { config, root } = await instance(t);
+  const { writeDraft } = await import("../src/draft.js");
+  const files = [];
+  t.after(async () => { for (const file of files) await rm(path.dirname(file), { recursive: true, force: true }); });
+  const env = { ...process.env, BURO_CONFIG: config.configPath, BURO_ROOT: root, BURO_DATABASE_PATH: config.databasePath, BURO_BACKUP_DIR: config.backupDir, BURO_API_URL: "", BURO_CURRENT_CONTEXT: "desk" };
+  const push = file => new Promise(resolve => execFile(process.execPath, [new URL("../src/cli.js", import.meta.url).pathname, "draft", "push", file], { env }, (error, stdout, stderr) => resolve({ error, stdout, stderr })));
+  const schema = loadSchema(config);
+  for (let i = 0; i < 4; i++) files.push(await writeDraft({ id: `parallel-${i}`, name: "Parallel", kind: "project" }, draftMetadata(schema, "record", "create", `parallel-${i}`), schema));
+  const created = await Promise.all(files.map(push));
+  assert.ok(created.every(result => !result.error), JSON.stringify(created));
+  const entity = await resolveEntity("parallel-0", config);
+  const metadata = draftMetadata(schema, "record", "update", entity.id, entity.updated_at);
+  for (const name of ["First", "Second"]) files.push(await writeDraft({ ...entity, name }, metadata, schema));
+  const raced = await Promise.all(files.slice(-2).map(push));
+  assert.equal(raced.filter(result => !result.error).length, 1);
+  assert.match(raced.find(result => result.error).stderr, /record changed/);
+  assert.equal((await readdir(path.join(config.backupDir, "mutation"))).length, 5);
 });

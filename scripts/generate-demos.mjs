@@ -125,7 +125,7 @@ function selectedDiff(output) {
 
 function selectedDraft(draft, parsed) {
   const lines = draft.split("\n");
-  const guide = "# important: confirmed requirements and approval conditions";
+  const guide = lines.find(line => line.startsWith("# important ("))?.replace(/\. .*/, ".");
   if (!guide) fail("draft field guidance is missing");
   return `${yaml.dump({ id: parsed.id, name: parsed.name, kind: parsed.kind, summary: parsed.summary }, { lineWidth: -1 }).trimEnd()}\n\n${guide}\n${yaml.dump({ important: parsed.important }, { lineWidth: -1 }).trimEnd()}`;
 }

@@ -16,8 +16,9 @@
 | codex | ~/.agents/skills/buro/SKILL.md; ~/.codex/hooks/buro-session-start.cjs; hooks.json | Командный hook SessionStart |
 | claude | ~/.claude/skills/buro/SKILL.md; hooks/buro-session-start.cjs; settings.json | Командный hook SessionStart |
 
-Запустите `buro connect <цель>`. `--path <профиль>` выбирает другой каталог
-профиля; skill тогда устанавливается в его skills. Чужие hooks и настройки
+Запустите `buro connect <цель>`. Для OpenCode/OpenCodez профиль выбирается через
+`OPENCODE_CONFIG_DIR`, если переменная задана; `--path <профиль>` имеет приоритет.
+При явном выборе профиля skill устанавливается в его skills. Чужие hooks и настройки
 сохраняются. Перед изменением файла создаётся копия; неизменившиеся подключения
 не перезаписываются. Конфликт с чужим skill или плагином сообщается явно.
 При переподключении Codex или Claude удаляется прежний управляемый блок

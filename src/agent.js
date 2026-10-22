@@ -25,7 +25,8 @@ export async function connectAgent(target, options = {}) {
     return `Instructions added to ${file}. Automatic session context must be configured separately.`;
   }
   const home = options.home || homedir();
-  const root = options.path ? path.resolve(options.path) : path.join(home, target === "codex" ? ".codex" : target === "claude" ? ".claude" : `.config/${target}`);
+  const profile = options.path || (["opencode", "opencodez"].includes(target) && process.env.OPENCODE_CONFIG_DIR);
+  const root = profile ? path.resolve(profile) : path.join(home, target === "codex" ? ".codex" : target === "claude" ? ".claude" : `.config/${target}`);
   const skillRoot = target === "codex" && !options.path ? path.join(home, ".agents/skills") : path.join(root, "skills");
   const resources = [[path.join(skillRoot, "buro/SKILL.md"), "../skills/buro/SKILL.md"]];
   const openCode = ["opencode", "opencodez"].includes(target);

@@ -133,7 +133,10 @@ export function normalizeFieldValue(value, field, label) {
   if (["record-list", "string-list"].includes(field.type)) {
     if (!Array.isArray(value)) throw new Error(`${label} must be a list`);
     return value.map((entry, index) => {
-      if (field.type !== "string-list") return normalizeFieldValue(entry, { ...field, type: "record" }, `${label}[${index}]`);
+      if (field.type !== "string-list") {
+        if (!object(entry)) throw new Error(`${label}[${index}] must be an object`);
+        return normalizeFieldValue(entry, { ...field, type: "record" }, `${label}[${index}]`);
+      }
       if (typeof entry !== "string" || !entry.trim()) throw new Error(`${label}[${index}] must be a non-empty string`);
       return entry.trim();
     });

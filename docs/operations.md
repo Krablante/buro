@@ -11,6 +11,10 @@ Configuration and state stay outside the package:
 ~/.local/share/buro/state/buro/backups/sqlite/{mutation,hourly,daily}/
 ```
 
+Repeated and concurrent init calls preserve existing memory. If the first init
+fails before committing, retry it after correcting the error; an empty database
+left by that attempt is safe to initialize.
+
 Drafts are private files in OS temporary directories, each with its own path.
 They are not stored next to source. Temporary-directory cleanup may remove old
 drafts; preserve intended edits elsewhere if they must survive that cleanup.
@@ -82,6 +86,8 @@ prints the command to schedule manually. Linux integration is exercised on live
 systems; macOS and Windows installers require verification on those platforms.
 The device must be on to make copies. Linux persistent timers catch up once on
 return; macOS RunAtLoad does so at login; Windows catches up when available.
+Schedules retain the selected database, backup directory, and device context,
+including settings supplied through environment variables during init.
 
 Snapshots include records, definitions, retired IDs, the BURO version, and the
 database device's context settings, independently of the writing client's identity.
@@ -117,6 +123,13 @@ saved model can be restored through the same one-time definition conversion.
 A client timeout does not prove a write failed: the server may complete after
 the connection is gone. Read the affected record before retrying. Failed pushes
 retain their draft. Incompatible type changes leave the previous model readable.
+
+| Symptom | Next step |
+| --- | --- |
+| API unavailable | Check api_url and reachability from this device; keep the configured memory target. |
+| Draft is stale | Pull a fresh draft and reconcile the intended change with current values. |
+| Backup fails | Check free space and permissions on backup_dir, then retry the retained draft. |
+| No initial context | Check `buro current` in the harness environment, reconnect, and restart OpenCode/OpenCodez or review the terminal hook. |
 
 ## Shared memory and deployment
 

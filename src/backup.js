@@ -35,7 +35,7 @@ export async function installBackupSchedule(config) {
   const id = createHash("sha256").update(config.databasePath).digest("hex").slice(0, 12);
   const name = `buro-backup-${id}`;
   const cli = fileURLToPath(new URL("./cli.js", import.meta.url));
-  const environment = { BURO_CONFIG: config.configPath, BURO_DATABASE_PATH: config.databasePath, BURO_BACKUP_DIR: config.backupDir, BURO_CURRENT_CONTEXT: config.currentContext, BURO_API_URL: "" };
+  const environment = { BURO_CONFIG: config.configPath, BURO_DATABASE_PATH: config.databasePath, BURO_BACKUP_DIR: config.backupDir, BURO_CURRENT_CONTEXT: config.currentContext, BURO_CURRENT_LIMIT: String(config.currentLimit), BURO_API_URL: "" };
   const quote = value => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%")}"`;
   try {
     if (process.platform === "linux") {
@@ -61,7 +61,7 @@ export async function installBackupSchedule(config) {
     }
     if (process.platform === "win32") {
       const ps = value => `'${value.replaceAll("'", "''")}'`;
-      const command = `$env:BURO_CONFIG=${ps(config.configPath)}; $env:BURO_DATABASE_PATH=${ps(config.databasePath)}; $env:BURO_BACKUP_DIR=${ps(config.backupDir)}; $env:BURO_API_URL=''; & ${ps(process.execPath)} ${ps(cli)} backup --scheduled`;
+      const command = `${Object.entries(environment).map(([key, value]) => `$env:${key}=${ps(value)}; `).join("")}& ${ps(process.execPath)} ${ps(cli)} backup --scheduled`;
       const encoded = Buffer.from(command, "utf16le").toString("base64");
       const script = `$action=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -NonInteractive -EncodedCommand ${encoded}'; $trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Hours 3); $settings=New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew; Register-ScheduledTask -TaskName ${ps(name)} -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null`;
       await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);

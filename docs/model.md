@@ -83,7 +83,8 @@ guide in another type. No bundled fields are automatically mixed into yours.
 supplies an omitted value. `section` groups fields in record output; definition
 order controls display order. `packet: false` hides a field from normal record
 output, not from storage or direct API reads. It is not a secrecy boundary.
-Nested fields use the same definitions. Empty custom types are valid.
+Nested fields use the same definitions, including packet visibility. A record-list
+must contain objects; empty entries are rejected. Empty custom types are valid.
 When a type change supplies defaults to older records, those values are saved
 in the same transaction. Changing the default later does not rewrite them.
 For migrated definitions, `paired_fields` preserves an existing constraint that

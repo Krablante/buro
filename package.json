@@ -1,7 +1,7 @@
 {
   "name": "buro",
-  "version": "3.0.0",
-  "description": "Typed knowledge storage for AI agents, with YAML-defined schemas. Replaces sprawling AGENTS.md and RAG for durable context.",
+  "version": "3.0.1",
+  "description": "A CLI and SQLite memory for AI agents: typed records, reviewed YAML changes, and shared context between sessions.",
   "license": "MIT",
   "keywords": [
     "ai-agents",

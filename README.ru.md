@@ -2,9 +2,9 @@
 <p align="center"><strong>Типизированная память о том, с чем вы работаете.</strong></p>
 <p align="center"><a href="README.md">English</a> · <a href="README.ru.md"><strong>Русский</strong></a></p>
 
-BURO сохраняет между сессиями агента сведения, правила и решения о конкретных
-проектах, сервисах, устройствах, книгах и других рабочих объектах. Агент открывает
-нужную запись вместо загрузки растущего файла памяти или сборки контекста из RAG.
+BURO — CLI и память на SQLite для ИИ-агентов. Он сохраняет между сессиями сведения,
+правила и решения о конкретных проектах, сервисах, устройствах, книгах и других
+рабочих объектах. Агент открывает нужную типизированную запись по вашей задаче.
 
 Полезная запись может быть небольшой:
 
@@ -24,7 +24,7 @@ important:
 Нужен **Node.js 24.14 или новее**.
 
 ```sh
-npm install -g https://github.com/Krablante/buro/releases/download/v3.0.0/buro-3.0.0.tgz
+npm install -g https://github.com/Krablante/buro/releases/download/v3.0.1/buro-3.0.1.tgz
 buro init
 buro connect opencodez
 ```
@@ -97,8 +97,9 @@ buro types delete book
 
 ## Местная или общая память
 
-Без `api_url` BURO работает с местной SQLite. Для общей памяти запустите
-`buro serve` на устройстве с базой и укажите его URL в настройках остальных:
+Без `api_url` BURO работает с местной SQLite. В доверенной частной сети запустите
+`buro serve --host 0.0.0.0` на устройстве с базой и укажите его URL в
+`~/.config/buro/config.json` остальных устройств:
 
 ```json
 {"api_url": "http://registry:8765", "current_context": "laptop"}

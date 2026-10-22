@@ -2,9 +2,9 @@
 <p align="center"><strong>Typed memory for the things you work on.</strong></p>
 <p align="center"><a href="README.md"><strong>English</strong></a> · <a href="README.ru.md">Русский</a></p>
 
-BURO keeps facts, rules, and decisions about specific projects, services, devices,
-books, and other work objects between agent sessions. The agent opens the relevant
-record instead of loading an expanding memory file or assembling fragments from RAG.
+BURO is a CLI and SQLite memory for AI agents. It keeps facts, rules, and decisions
+about specific projects, services, devices, books, and other work objects between
+sessions. The agent opens the relevant typed record when your task needs it.
 
 A useful record can be small:
 
@@ -24,7 +24,7 @@ formats, references, and conflicting edits. You and your agent check the facts.
 Requires **Node.js 24.14 or newer**.
 
 ```sh
-npm install -g https://github.com/Krablante/buro/releases/download/v3.0.0/buro-3.0.0.tgz
+npm install -g https://github.com/Krablante/buro/releases/download/v3.0.1/buro-3.0.1.tgz
 buro init
 buro connect opencodez
 ```
@@ -97,8 +97,9 @@ See [types, fields, and reviewed changes](docs/model.md).
 
 ## Local or shared
 
-Without `api_url`, BURO uses local SQLite. To share one memory, run `buro serve`
-on its device and set the server's URL in the other devices' config:
+Without `api_url`, BURO uses local SQLite. On a trusted private network, run
+`buro serve --host 0.0.0.0` on the database device and set its URL in the other
+devices' `~/.config/buro/config.json`:
 
 ```json
 {"api_url": "http://registry:8765", "current_context": "laptop"}

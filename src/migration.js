@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import { assertSupportedDatabase, backupDatabase, openDatabase, readSchemaBinding, readStoredModel, schemaSql, withWriteTransaction, writeSchemaBinding, indexEntity, updateEntity, upgradeEntityOrderIndex } from "./db.js";
 import { bundledSchema, entityData, fingerprint, normalizeSchema, rowToEntity, schemaFromTypes, schemaTypes, typeDefinition, loadTypeDefinition } from "./schema.js";
-import { validateTypeRecords } from "./resolver.js";
+import { serializeMutation, validateTypeRecords } from "./resolver.js";
 
 // The only old-model boundary. Expand each saved definition once; v3 never reads
 // external type files or combines definitions while operating the registry.
@@ -45,17 +45,23 @@ export async function saveConfig(config, value) {
   } catch (error) { await rm(temporary, { force: true }); throw error; }
 }
 
-export async function initializeRegistry(config, { dryRun = false } = {}) {
+export function initializeRegistry(config, options) {
+  return serializeMutation(() => initializeMemory(config, options));
+}
+
+async function initializeMemory(config, { dryRun = false } = {}) {
   if (config.apiUrl) throw new Error("init requires the device holding the database; clients use api_url and never initialize a second memory");
-  const created = !existsSync(config.databasePath);
+  let created = !existsSync(config.databasePath);
   if (created && dryRun) return { created, count: 0, schema: bundledSchema() };
   if (created) await mkdir(path.dirname(config.databasePath), { recursive: true, mode: 0o700 });
   const db = openDatabase(config.databasePath, { readOnly: dryRun });
-  let initialized = false;
   try {
     const run = async () => {
       assertSupportedDatabase(db);
-      const stored = created ? null : readStoredModel(db);
+      const stored = readStoredModel(db);
+      // Another process may have initialized the file before we acquired the lock.
+      // An empty database left by a failed first init can safely be tried again.
+      created = !stored && !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1").get();
       if (!created && !stored) throw new Error("existing database has no saved definitions; initialize it with BURO v2 and its original definitions before upgrading");
       const current = stored ? upgradeModel(stored) : bundledSchema();
       const types = schemaTypes(current).map(type => {
@@ -104,7 +110,6 @@ export async function initializeRegistry(config, { dryRun = false } = {}) {
       db.exec("BEGIN");
       try { result = await run(); } finally { db.exec("ROLLBACK"); }
     } else result = await withWriteTransaction(db, apply);
-    initialized = true;
     if (!dryRun && result.upgraded && config.instanceRoot && config.stateDir) {
       const previousDraft = config.previousConfig.draft_path || path.join(config.instanceRoot, "BURO_DRAFT.yaml");
       if (existsSync(previousDraft)) {
@@ -117,6 +122,5 @@ export async function initializeRegistry(config, { dryRun = false } = {}) {
     return result;
   } finally {
     db.close();
-    if (created && !initialized) await rm(config.databasePath, { force: true });
   }
 }

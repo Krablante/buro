@@ -41,6 +41,7 @@ central_pending=0
 unavailable_workers=()
 failed_workers=()
 deployed_workers=()
+workers=""
 
 run() {
   printf '+ '; printf '%q ' "$@"; printf '\n'
@@ -78,13 +79,14 @@ finish() {
   if [ "$dry_run" -eq 0 ] && [ -f "$tarball" ]; then
     # A durable continuation record, including interrupted rollouts.
     node --input-type=module - "$pack_dir/pending.json" "$tarball" "$status" "$previous_package" "$previous_snapshot" \
-      "${unavailable_workers[*]}" "${failed_workers[*]}" "${deployed_workers[*]}" <<'JS'
+      "${unavailable_workers[*]}" "${failed_workers[*]}" "${deployed_workers[*]}" "$workers" <<'JS'
 import {writeFileSync, readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-const [target, pkg, status, previous_package, previous_snapshot, offline, failed, deployed] = process.argv.slice(2);
+const [target, pkg, status, previous_package, previous_snapshot, offline, failed, deployed, planned] = process.argv.slice(2);
 const hosts = text => text ? text.split(' ') : [];
 writeFileSync(target, JSON.stringify({package:pkg, sha256:createHash('sha256').update(readFileSync(pkg)).digest('hex'),
-  status:Number(status), previous_package, previous_snapshot, unavailable:hosts(offline), failed:hosts(failed), deployed:hosts(deployed)}, null, 2)+'\n', {mode:0o600});
+  status:Number(status), previous_package, previous_snapshot, unavailable:hosts(offline), failed:hosts(failed), deployed:hosts(deployed),
+  pending:hosts(planned).filter(host => !hosts(deployed).includes(host))}, null, 2)+'\n', {mode:0o600});
 JS
     printf 'Package and rollout record retained: %s\n' "$pack_dir"
   fi
@@ -92,7 +94,6 @@ JS
 }
 trap finish EXIT
 
-workers=""
 if [ "$sync_workers" -eq 1 ]; then
   workers=${BURO_WORKER_HOSTS:-$(node --input-type=module <<'JS'
 import {loadConfig} from './src/config.js';
