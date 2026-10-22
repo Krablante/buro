@@ -1,11 +1,35 @@
 id: host
-label: A computer or server; creating a host record is optional.
+label: Host
 fields:
-  aliases: {type: string-list, section: identity, guide: Alternate machine names.}
-  summary: {type: text, section: summary, guide: What this machine is used for.}
-  address: {type: string, section: connection, guide: Known network address.}
-  ssh_target: {type: string, section: connection, guide: SSH target when available.}
-  root: {type: string, section: location, guide: Shared workspace root only when one actually exists.}
-  important: {type: string-list, section: important, guide: Machine-wide operating rules including any folder conventions.}
-  avoid: {type: string-list, section: avoid, guide: Concrete machine-wide restrictions.}
-  notes: {type: text, section: notes, guide: Other durable machine information.}
+  summary: {type: text, guide: "What this object is, why it exists, and what it does."}
+  important: {type: string-list, guide: "Confirmed facts, decisions, and requirements. Approval conditions belong here, even when phrased as prohibitions."}
+  avoid: {type: string-list, guide: Other prohibitions and operating restrictions. Do not duplicate approval conditions from important.}
+  locations:
+    type: record-list
+    guide: Source, runtime, data, materials, or web pages. Paths belong to their recorded devices.
+    fields:
+      host: {type: string, guide: Device name; a host record is optional.}
+      path: {type: string, guide: Absolute path on that device.}
+      url: {type: string, guide: Network address.}
+      purpose: {type: text, guide: What is located here.}
+  related:
+    type: record-list
+    guide: Informational references. Choose one of id, path, or url; note explains the link. They do not block deletion.
+    fields:
+      id: {type: string, guide: Exact BURO record ID.}
+      path: {type: string, guide: File or directory.}
+      url: {type: string, guide: Web resource.}
+      note: {type: text, guide: Why this reference matters.}
+  read_first: {type: string-list, guide: Main documents and instructions to read when needed for the task.}
+  aliases: {type: string-list, guide: Other names used to find this object.}
+  notes: {type: text, guide: Durable details that do not fit the short summary. Exclude session logs and temporary plans.}
+  addresses: {type: string-list, guide: "Known device network addresses, such as LAN or VPN addresses."}
+  ssh_target: {type: string, guide: Name or address used by ssh to connect to this device.}
+  git_identities:
+    type: record-list
+    guide: Git author identities, GitHub CLI accounts, and when to use each one.
+    fields:
+      user_name: {type: string, guide: Git commit author name.}
+      user_email: {type: string, guide: Git commit author email.}
+      gh_cli_user: {type: string, guide: GitHub account for CLI operations.}
+      instructions: {type: text, guide: When and how to use this identity.}

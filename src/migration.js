@@ -1,114 +1,122 @@
 import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { assertSupportedDatabase, backupDatabase, initDb, openDatabase, readSchemaBinding, readStoredModel, replaceEntities, schemaSql, withWriteTransaction, writeSchemaBinding } from "./db.js";
-import { loadSchema, normalizeSchema } from "./schema.js";
-import { validateEntitySet } from "./resolver.js";
+import { mkdir, writeFile, rename, readFile, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import path from "node:path";
+import { assertSupportedDatabase, backupDatabase, openDatabase, readSchemaBinding, readStoredModel, schemaSql, withWriteTransaction, writeSchemaBinding, indexEntity, updateEntity, upgradeEntityOrderIndex } from "./db.js";
+import { bundledSchema, entityData, fingerprint, normalizeSchema, rowToEntity, schemaFromTypes, schemaTypes, typeDefinition, loadTypeDefinition } from "./schema.js";
+import { validateTypeRecords } from "./resolver.js";
 
-function previousSchema(db, binding) {
-  const stored = readStoredModel(db);
-  if (stored) return normalizeSchema(stored, "stored model");
-  if (["starter", "politia"].includes(binding?.preset)) {
-    const file = new URL(`../presets/legacy/${binding.preset}-v${binding.preset_version}.yaml`, import.meta.url);
-    if (existsSync(file)) {
-      const model = loadSchema(fileURLToPath(file));
-      if (model.hash === binding.preset_hash) return model;
-    }
+// The only old-model boundary. Expand each saved definition once; v3 never reads
+// external type files or combines definitions while operating the registry.
+export function upgradeModel(model) {
+  if (model.id === "buro" && model.version === 3) return normalizeSchema(model);
+  function fieldsWithoutDraftFlags(fields) {
+    return Object.fromEntries(Object.entries(fields).map(([name, value]) => {
+      const { draft_optional: _, ...field } = value;
+      if (field.fields) field.fields = fieldsWithoutDraftFlags(field.fields);
+      return [name, field];
+    }));
   }
-  return null;
+  return schemaFromTypes(Object.entries(model.kinds).map(([id, kind]) => {
+    const names = [...new Set([...(kind.field_sets || []).flatMap(set => model.field_sets[set]), ...(kind.fields || [])])];
+    return { id, label: kind.label, origin: "custom", fields: fieldsWithoutDraftFlags(Object.fromEntries(names.map(name => [name, kind.definitions?.[name] || model.fields[name]]))) };
+  }), model.default_kind);
 }
 
-function canonical(value) {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+export function registryGeneration(db) {
+  const row = db.prepare("SELECT value FROM buro_meta WHERE key='generation'").get();
+  if (!row) throw new Error("memory needs upgrading; run buro init");
+  return row.value;
+}
+export function resetGeneration(db) {
+  db.prepare("INSERT INTO buro_meta(key,value,updated_at) VALUES('generation',?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at")
+    .run(randomUUID(), new Date().toISOString());
 }
 
-export function migrateEntities(entities, binding, oldSchema, schema) {
-  const historical = oldSchema && ["starter", "politia"].includes(oldSchema.id)
-    ? new URL(`../presets/legacy/${oldSchema.id}-v${oldSchema.version}.yaml`, import.meta.url) : null;
-  const legacy = historical && existsSync(historical) && loadSchema(fileURLToPath(historical)).hash === oldSchema.hash && binding.preset === schema.id;
-  const input = entities.map((value) => {
-    const entity = { ...value };
-    if (legacy && entity.kind !== oldSchema.context.kind && (entity.host !== undefined || entity.path !== undefined)) {
-      entity.locations = [...(entity.locations || []), {
-        ...(entity.host ? { host: entity.host } : {}),
-        ...(entity.path ? { path: entity.path } : {}),
-      }];
-      delete entity.host;
-      delete entity.path;
-      delete entity.updated_at;
-    }
-    // Old starter's document records remain ordinary resources in the new default model.
-    if (legacy && binding.preset === "starter" && entity.kind === "document" && !schema.kinds.document) {
-      entity.kind = "item";
-      delete entity.updated_at;
-    }
-    return entity;
-  });
+export async function saveConfig(config, value) {
+  const contents = `${JSON.stringify(value, null, 2)}\n`;
+  try { if (await readFile(config.configPath, "utf8") === contents) return; } catch (error) { if (error.code !== "ENOENT") throw error; }
+  await mkdir(path.dirname(config.configPath), { recursive: true, mode: 0o700 });
+  const temporary = `${config.configPath}.${randomUUID()}.tmp`;
   try {
-    const normalized = validateEntitySet(input, schema);
-    let transformed = 0;
-    for (let index = 0; index < normalized.length; index += 1) {
-      const { updated_at: _oldRevision, ...before } = entities[index];
-      const { updated_at: _newRevision, ...after } = normalized[index];
-      // Compare facts without treating YAML/JSON key order as a change.
-      if (JSON.stringify(canonical(before)) !== JSON.stringify(canonical(after))) {
-        delete normalized[index].updated_at;
-        transformed += 1;
-      }
-    }
-    return { entities: normalized, transformed };
-  } catch (error) {
-    throw new Error(`configuration cannot be applied without changing saved data: ${error.message}. Restore the definition or explicitly migrate the affected records; no data changed.`);
-  }
+    await writeFile(temporary, contents, { mode: 0o600, flag: "wx" });
+    await rename(temporary, config.configPath);
+  } catch (error) { await rm(temporary, { force: true }); throw error; }
 }
 
-function plan(db, schema) {
-  const binding = readSchemaBinding(db);
-  if (!binding) throw new Error("unbound existing database; use an explicit registry import to recover it");
-  const oldSchema = previousSchema(db, binding);
-  if (oldSchema && oldSchema.hash !== binding.preset_hash) throw new Error("stored model does not match the database binding");
-  const rows = db.prepare("SELECT id, name, kind, data, updated_at FROM entities ORDER BY id").all();
-  const entities = rows.map((row) => ({ id: row.id, name: row.name, kind: row.kind, ...JSON.parse(row.data), updated_at: row.updated_at }));
-  return { binding, ...migrateEntities(entities, binding, oldSchema, schema) };
-}
-
-export async function initializeRegistry(config, schema, { dryRun = false } = {}) {
-  if (!existsSync(config.databasePath)) {
-    if (dryRun) return { created: true, count: 0, transformed: 0 };
-    await initDb(config.databasePath, schema);
-    return { created: true, count: 0, transformed: 0 };
-  }
+export async function initializeRegistry(config, { dryRun = false } = {}) {
+  if (config.apiUrl) throw new Error("init requires the device holding the database; clients use api_url and never initialize a second memory");
+  const created = !existsSync(config.databasePath);
+  if (created && dryRun) return { created, count: 0, schema: bundledSchema() };
+  if (created) await mkdir(path.dirname(config.databasePath), { recursive: true, mode: 0o700 });
   const db = openDatabase(config.databasePath, { readOnly: dryRun });
+  let initialized = false;
   try {
-    const apply = async () => {
+    const run = async () => {
       assertSupportedDatabase(db);
-      const binding = readSchemaBinding(db);
-      const indexed = db.prepare("SELECT count(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('entity_lookup', 'entity_locations')").get().count === 2;
-      if (binding?.preset_hash === schema.hash && indexed && binding.indexes_version === 2) {
-        const { source: _source, hash: _hash, core_fields: _coreFields, ...model } = schema;
-        const metadataChanged = JSON.stringify(readStoredModel(db)) !== JSON.stringify(model);
-        const count = db.prepare("SELECT count(*) AS count FROM entities").get().count;
-        if (!dryRun && metadataChanged) {
-          const backupPath = await backupDatabase(config.databasePath, config);
-          writeSchemaBinding(db, schema);
-          return { count, transformed: 0, adopted: false, backupPath };
-        }
-        return { count, transformed: 0, adopted: false };
+      const stored = created ? null : readStoredModel(db);
+      if (!created && !stored) throw new Error("existing database has no saved definitions; initialize it with BURO v2 and its original definitions before upgrading");
+      const current = stored ? upgradeModel(stored) : bundledSchema();
+      const types = schemaTypes(current).map(type => {
+        if (type.origin !== "builtin") return type;
+        const template = loadTypeDefinition(type.id);
+        return fingerprint(typeDefinition(current, type.id)) === fingerprint(template) ? type : { ...template, origin: "builtin" };
+      });
+      const schema = schemaFromTypes(types, current.default_kind);
+      const upgraded = !created && readSchemaBinding(db)?.storage_version !== 3;
+      const definitionsChanged = schema.hash !== current.hash;
+      if (!created && !upgraded && !definitionsChanged) return { created, upgraded, count: db.prepare("SELECT count(*) AS n FROM entities").get().n, schema };
+      const count = created ? 0 : db.prepare("SELECT count(*) AS n FROM entities").get().n;
+      if (!created) {
+        const kinds = Object.keys(schema.kinds);
+        const unknown = db.prepare(`SELECT kind FROM entities WHERE kind NOT IN (${kinds.map(() => "?").join(",")}) LIMIT 1`).get(...kinds);
+        if (unknown) throw new Error(`record uses an unknown type: ${unknown.kind}`);
+        for (const id of kinds) validateTypeRecords(db, id, schema);
       }
-      const result = plan(db, schema);
-      if (dryRun) return { count: result.entities.length, transformed: result.transformed, adopted: result.binding.preset_hash !== schema.hash };
-      const adopted = result.binding.preset_hash !== schema.hash;
-      if (adopted && existsSync(config.draftPath)) throw new Error(`active draft at ${config.draftPath}; finish or preserve it before applying new definitions`);
-      const backupPath = await backupDatabase(config.databasePath, config);
-      db.exec(schemaSql);
-      await replaceEntities(result.entities, db, schema);
-      return { count: result.entities.length, transformed: result.transformed, adopted, backupPath };
+      if (!dryRun && (created || upgraded || definitionsChanged)) {
+        const backupPath = created ? null : await backupDatabase(config.databasePath, config);
+        db.exec(schemaSql);
+        if (created || upgraded) upgradeEntityOrderIndex(db);
+        writeSchemaBinding(db, schema);
+        if (!created) for (const row of db.prepare("SELECT * FROM entities").iterate()) {
+          const entity = rowToEntity(row, schema);
+          if (!isDeepStrictEqual(JSON.parse(row.data), entityData(entity, schema))) await updateEntity(entity.id, entity, db, schema);
+          else indexEntity(db, entity, schema);
+        }
+        if (created || upgraded) resetGeneration(db);
+        return { created, upgraded, count, schema, backupPath };
+      }
+      return { created, upgraded, count, schema };
     };
-    if (!dryRun) return await withWriteTransaction(db, apply);
-    db.exec("BEGIN");
-    try { return await apply(); } finally { db.exec("ROLLBACK"); }
+    const apply = async () => {
+      const result = await run();
+      const previous = config.previousConfig;
+      const { mode, central_host, preset, schema_path, type_files, default_kind, draft_path, ...settings } = previous;
+      // Old central configs used api_url to describe their own server. In v3 it
+      // selects remote storage, so retain it only for actual old clients.
+      if (["central", "local"].includes(mode)) delete settings.api_url;
+      await saveConfig(config, settings);
+      return result;
+    };
+    let result;
+    if (dryRun) {
+      db.exec("BEGIN");
+      try { result = await run(); } finally { db.exec("ROLLBACK"); }
+    } else result = await withWriteTransaction(db, apply);
+    initialized = true;
+    if (!dryRun && result.upgraded && config.instanceRoot && config.stateDir) {
+      const previousDraft = config.previousConfig.draft_path || path.join(config.instanceRoot, "BURO_DRAFT.yaml");
+      if (existsSync(previousDraft)) {
+        const destination = path.join(config.stateDir, "migration", `v2-draft-${Date.now()}.yaml`);
+        await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
+        await rename(previousDraft, destination);
+        result.preservedDraftPath = destination;
+      }
+    }
+    return result;
   } finally {
     db.close();
+    if (created && !initialized) await rm(config.databasePath, { force: true });
   }
 }

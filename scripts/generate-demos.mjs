@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { copyFile, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,7 +11,6 @@ import yaml from "js-yaml";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(repositoryRoot, "src", "cli.js");
-const starterPresetPath = path.join(repositoryRoot, "presets", "starter.yaml");
 const assetsDir = path.join(repositoryRoot, "assets");
 const packageVersion = JSON.parse(readFileSync(path.join(repositoryRoot, "package.json"), "utf8")).version;
 
@@ -41,15 +40,15 @@ const translations = {
     name: "My website",
     summary: "Personal website.",
     important: "Ask me before publishing.",
-    title: "reviewed facts, one draft",
-    note: "real starter CLI · generated from source",
+    title: "durable facts, reviewed changes",
+    note: "real BURO CLI · generated from source",
   },
   ru: {
     name: "Мой сайт",
     summary: "Личный сайт.",
     important: "Перед публикацией спросить меня.",
-    title: "проверенные факты, один черновик",
-    note: "реальный starter CLI · собрано из исходников",
+    title: "память о делах, проверяемые правки",
+    note: "реальный BURO CLI · собрано из исходников",
   },
 };
 
@@ -84,10 +83,7 @@ function cleanEnvironment(workDir) {
     NO_COLOR: "1",
     BURO_CONFIG: path.join(workDir, "config.json"),
     BURO_CURRENT_CONTEXT: "workstation",
-    BURO_MODE: "local",
-    BURO_PRESET: "starter",
     BURO_ROOT: path.join(workDir, "instance"),
-    BURO_SCHEMA_PATH: starterPresetPath,
   };
 }
 
@@ -105,7 +101,8 @@ function normalizePaths(text, env) {
   return String(text)
     .replaceAll(env.BURO_CONFIG, "~/.config/buro/config.json")
     .replaceAll(env.BURO_ROOT, "~/.local/share/buro")
-    .replaceAll(env.HOME, "~");
+    .replaceAll(env.HOME, "~")
+    .replaceAll(/\/tmp\/buro-draft-[^/\s"]+\/change.yaml/g, "/tmp/buro-draft/change.yaml");
 }
 
 function requireText(text, expected, surface) {
@@ -123,12 +120,12 @@ function selectedDiff(output) {
   const toLabel = lines.find((line) => line.startsWith("+++ "));
   if (active.length !== 6) fail(`draft diff exposed ${active.length} expected demo lines instead of 6`);
   if (!fromLabel || !toLabel) fail("draft diff no longer exposes its source and target labels");
-  return [...lines.slice(0, 3), "", fromLabel, toLabel, "  …", ...active].join("\n");
+  return [lines[0], "", fromLabel, toLabel, ...active].join("\n");
 }
 
 function selectedDraft(draft, parsed) {
   const lines = draft.split("\n");
-  const guide = lines.find((line) => line.startsWith("# important — "));
+  const guide = "# important: confirmed requirements and approval conditions";
   if (!guide) fail("draft field guidance is missing");
   return `${yaml.dump({ id: parsed.id, name: parsed.name, kind: parsed.kind, summary: parsed.summary }, { lineWidth: -1 }).trimEnd()}\n\n${guide}\n${yaml.dump({ important: parsed.important }, { lineWidth: -1 }).trimEnd()}`;
 }
@@ -136,16 +133,15 @@ function selectedDraft(draft, parsed) {
 async function captureFlow(language, workDir) {
   const copy = translations[language];
   const env = cleanEnvironment(workDir);
-  const instanceRoot = env.BURO_ROOT;
-  const draftPath = path.join(instanceRoot, "BURO_DRAFT.yaml");
+  await mkdir(workDir, { recursive: true });
+  await writeFile(env.BURO_CONFIG, JSON.stringify({ backup_schedule: false }));
 
   const init = normalizePaths(runCli(["init"], env), env);
-  requireText(init, "Preset: starter v3", "buro init");
-  requireText(init, "no host record is required", "buro init");
+  requireText(init, "types: project, service, host", "buro init");
 
-  const draftReady = normalizePaths(runCli(["draft", "new", "my-site", "project"], env), env);
-  requireText(draftReady, "mode: new project", "buro draft new");
-  requireText(draftReady, "id: my-site", "buro draft new");
+  const rawReady = runCli(["draft", "new", "my-site", "project"], env);
+  const draftPath = rawReady.match(/Draft: (.+)/)[1];
+  const draftReady = normalizePaths(rawReady, env);
 
   let draft = await readFile(draftPath, "utf8");
   draft = replaceExactlyOnce(draft, /^name: my-site$/m, `name: ${copy.name}`, "name field");
@@ -156,12 +152,12 @@ async function captureFlow(language, workDir) {
   const parsedDraft = yaml.load(draft);
   const draftExcerpt = selectedDraft(draft, parsedDraft);
 
-  const diff = normalizePaths(runCli(["draft", "diff"], env), env);
+  const diff = normalizePaths(runCli(["draft", "diff", draftPath], env), env);
   requireText(diff, `+   - ${copy.important}`, "buro draft diff");
   requireText(diff, `+ summary: ${copy.summary}`, "buro draft diff");
 
-  const pushed = normalizePaths(runCli(["draft", "push"], env), env);
-  requireText(pushed, "action: created", "buro draft push");
+  const pushed = normalizePaths(runCli(["draft", "push", draftPath], env), env);
+  requireText(pushed, "create: my-site", "buro draft push");
 
   const current = normalizePaths(runCli(["my-site"], env), env);
   requireText(current, "BURO Entity: project:my-site", "buro my-site");
@@ -174,10 +170,10 @@ async function captureFlow(language, workDir) {
   return [
     { start: 0, end: 3.2, text: commandBlock("buro init", init) },
     { start: 3.2, end: 7, text: commandBlock("buro draft new my-site project", draftReady) },
-    { start: 7, end: 11.5, text: commandBlock("$EDITOR ~/.local/share/buro/BURO_DRAFT.yaml", draftExcerpt) },
-    { start: 11.5, end: 16, text: commandBlock("buro draft diff", selectedDiff(diff)) },
-    { start: 16, end: 19.5, text: commandBlock("buro draft push", pushed) },
-    { start: 19.5, end: DURATION, text: commandBlock("buro my-site", current) },
+    { start: 7, end: 11.5, text: commandBlock("$EDITOR /tmp/buro-draft/change.yaml", draftExcerpt) },
+    { start: 11.5, end: 16, text: commandBlock("buro draft diff /tmp/buro-draft/change.yaml", selectedDiff(diff)) },
+    { start: 16, end: 19.5, text: commandBlock("buro draft push /tmp/buro-draft/change.yaml", pushed) },
+    { start: 19.5, end: DURATION, text: commandBlock("buro my-site", current.split("\n").filter(line => !line.trimStart().startsWith("#")).join("\n")) },
   ];
 }
 

@@ -2,93 +2,59 @@ import { readFile, writeFile, mkdir, copyFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
-const START = "<!-- BURO:START -->";
-const END = "<!-- BURO:END -->";
-const managed = "managed by BURO";
-
-export function agentContract() {
-  return `## BURO Agent Contract
-
-BURO stores durable facts about the user's existing work and environment.
-For a named project, service, machine, or other work object, first use
-\`buro <id-or-name>\`; use \`buro search <text>\` only when its identity is unclear.
-Read the \`buro\` skill when available, or \`buro agent --full\` for the workflow.
-Follow relevant recorded rules, read entry documents as needed, and verify
-material contradictions. Missing facts or records do not block ordinary work.
-Types and fields are configurable; inspect \`buro types <kind>\` when needed.
-Paths belong to their recorded machines. Before operating on a machine, read
-its recorded rules when not already supplied; \`buro current --brief\` gives
-local machine rules without requiring a host record or folder layout.
-When authorized to maintain BURO, preserve confirmed durable facts and lasting
-decisions from the conversation and work. Do not turn temporary requests,
-suggestions, guesses, or session logs into permanent facts. A read-only request
-does not authorize writes. Keep affected records consistent with authorized
-changes as part of that work. Review changes through draft pull/new/delete,
-edit the printed file, inspect draft diff, then draft push; never bypass
-revisions or edit SQLite directly. BURO does not grant extra task permissions.
-`;
-}
-
-async function existing(file) {
-  try { return await readFile(file, "utf8"); } catch (error) { if (error.code === "ENOENT") return ""; throw error; }
-}
-
+const START = "<!-- BURO:START -->", END = "<!-- BURO:END -->";
+async function existing(file) { try { return await readFile(file, "utf8"); } catch (error) { if (error.code === "ENOENT") return ""; throw error; } }
 async function save(file, contents, old) {
-  if (old === contents) return;
+  if (contents === old) return;
   await mkdir(path.dirname(file), { recursive: true });
   if (old) await copyFile(file, `${file}.buro-backup-${Date.now()}`);
   await writeFile(file, contents, { mode: 0o600 });
 }
-
-function instructionContents(file, old) {
-  const block = `${START}\n${agentContract()}${END}`;
-  const start = old.indexOf(START);
-  const end = old.indexOf(END);
-  if ((start === -1) !== (end === -1) || (start !== -1 && end < start)
-    || old.indexOf(START, start + START.length) !== -1 || old.indexOf(END, end + END.length) !== -1) {
-    throw new Error(`malformed BURO block in ${file}; preserve and repair it before reconnecting`);
-  }
-  return start === -1 ? `${old}${old && !old.endsWith("\n") ? "\n" : ""}${old ? "\n" : ""}${block}\n`
-    : old.slice(0, start) + block + old.slice(end + END.length);
+function blockContents(file, old, contents) {
+  const start = old.indexOf(START), end = old.indexOf(END);
+  if ((start === -1) !== (end === -1) || (start !== -1 && end < start) || old.indexOf(START, start + START.length) !== -1 || old.indexOf(END, end + END.length) !== -1) throw new Error(`malformed BURO block in ${file}`);
+  const block = contents ? `${START}\n${contents.trim()}\n${END}` : "";
+  return start === -1 ? contents ? `${old}${old ? "\n\n" : ""}${block}\n` : old : old.slice(0, start) + block + old.slice(end + END.length);
 }
-
 export async function connectAgent(target, options = {}) {
-  const userRoot = options.home || homedir();
-  const files = [];
+  if (!["file", "opencode", "opencodez", "codex", "claude"].includes(target)) throw new Error("choose opencodez, opencode, codex, claude, or file");
   if (target === "file") {
-    if (!options.path) throw new Error("connect file requires --path to an agent instruction file");
-    const file = path.resolve(options.path);
-    const old = await existing(file);
-    await save(file, instructionContents(file, old), old);
-    return [file];
+    if (!options.path) throw new Error("connect file requires --path");
+    const file = path.resolve(options.path), old = await existing(file);
+    await save(file, blockContents(file, old, await readFile(new URL("../integrations/system-prompt.md", import.meta.url), "utf8")), old);
+    return `Instructions added to ${file}. Automatic session context must be configured separately.`;
   }
-  if (!["opencodez", "opencode", "codex", "claude"].includes(target)) throw new Error("choose opencodez, opencode, codex, claude, or file");
-  const root = options.path ? path.resolve(options.path) : path.join(userRoot,
-    target === "codex" ? ".codex" : target === "claude" ? ".claude" : `.config/${target}`);
-  const skillRoot = target === "codex" && !options.path ? path.join(userRoot, ".agents", "skills") : path.join(root, "skills");
-  // Prepare and validate every target before changing integration files.
-  const skill = path.join(skillRoot, "buro", "SKILL.md");
-  const plugin = path.join(root, "plugins", "buro.js");
-  const resources = [[skill, "../skills/buro/SKILL.md"]];
-  if (["opencode", "opencodez"].includes(target)) resources.push([plugin, "../integrations/opencode/plugin.js"]);
-  const updates = [];
+  const home = options.home || homedir();
+  const root = options.path ? path.resolve(options.path) : path.join(home, target === "codex" ? ".codex" : target === "claude" ? ".claude" : `.config/${target}`);
+  const skillRoot = target === "codex" && !options.path ? path.join(home, ".agents/skills") : path.join(root, "skills");
+  const resources = [[path.join(skillRoot, "buro/SKILL.md"), "../skills/buro/SKILL.md"]];
+  const openCode = ["opencode", "opencodez"].includes(target);
+  if (openCode) resources.push([path.join(root, "plugins/buro.js"), "../integrations/opencode/plugin.js"]);
+  else resources.push([path.join(root, "hooks/buro-session-start.cjs"), "../integrations/session-start.cjs"]);
+  const changes = [];
   for (const [file, resource] of resources) {
     const old = await existing(file);
-    if (old && !old.includes(managed)) throw new Error(`existing user file ${file}; choose another path or integrate manually`);
-    updates.push({ file, old, contents: await readFile(new URL(resource, import.meta.url), "utf8") });
+    if (old && !old.includes("managed by BURO")) throw new Error(`existing user file: ${file}; integrate manually or choose --path`);
+    changes.push({ file, old, contents: await readFile(new URL(resource, import.meta.url), "utf8") });
   }
-  if (!["opencode", "opencodez"].includes(target)) {
-    const file = path.join(root, target === "claude" ? "CLAUDE.md" : "AGENTS.md");
-    const old = await existing(file);
-    updates.push({ file, old, contents: instructionContents(file, old) });
+  if (!openCode) {
+    const file = path.join(root, target === "codex" ? "hooks.json" : "settings.json");
+    const old = await existing(file), config = old ? JSON.parse(old) : {};
+    if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error(`invalid hook config: ${file}`);
+    config.hooks ||= {};
+    const previous = config.hooks.SessionStart || [];
+    if (!Array.isArray(previous)) throw new Error(`SessionStart must be an array: ${file}`);
+    // Remove only our previous handler; preserve every unrelated hook and group.
+    const groups = previous.map(group => ({ ...group, hooks: group.hooks.filter(hook => !hook.command?.includes("buro-session-start.cjs")) })).filter(group => group.hooks.length);
+    const script = path.join(root, "hooks/buro-session-start.cjs");
+    if (/[\r\n"`$]/.test(script + process.execPath)) throw new Error("hook paths contain unsupported shell characters; integrate manually");
+    groups.push({ matcher: "startup|clear", hooks: [{ type: "command", command: `"${process.execPath}" "${script}"`, timeout: 10, ...(target === "codex" ? { additionalContextLimit: 16000 } : {}) }] });
+    config.hooks.SessionStart = groups;
+    changes.push({ file, old, contents: `${JSON.stringify(config, null, 2)}\n` });
+    const instructions = path.join(root, target === "codex" ? "AGENTS.md" : "CLAUDE.md");
+    const prior = await existing(instructions);
+    if (prior.includes(START)) changes.push({ file: instructions, old: prior, contents: blockContents(instructions, prior, "") });
   }
-  for (const { file, old, contents } of updates) {
-    await save(file, contents, old);
-    files.push(file);
-  }
-  return files;
-}
-
-export async function fullAgentWorkflow() {
-  return readFile(new URL("../skills/buro/SKILL.md", import.meta.url), "utf8");
+  for (const change of changes) await save(change.file, change.contents, change.old);
+  return `BURO connected:\n${changes.map(change => change.file).join("\n")}\n${openCode ? "Restart OpenCode/OpenCodez." : target === "codex" ? "Review and trust the SessionStart hook in /hooks, then start a new session. Hooks must be enabled in your Codex version." : "Start a new Claude Code session. SessionStart command hooks must be enabled."}\nSystem prompts are configured by you. Optional text: integrations/system-prompt.md in the BURO package.`;
 }

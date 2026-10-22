@@ -1,237 +1,59 @@
 import { createServer } from "node:http";
-
-import { loadConfig } from "./config.js";
-import { assertSchemaBinding, openDatabase } from "./db.js";
-import {
-  createEntityRecord,
-  deleteEntityRecord,
-  resolveCurrentContext,
-  resolveEntities,
-  resolveEntitySummaries,
-  resolveEntity,
-  resolveEntityPacket,
-  resolveHealth,
-  resolveSchema,
-  updateEntityRecord,
-} from "./resolver.js";
+import { loadConfig, hasDirectStorage } from "./config.js";
+import { openDatabase, assertSchemaBinding } from "./db.js";
+import { applyChange, resolveCurrentContext, resolveEntity, resolveEntityPacket, resolveEntitySummaries, resolveHealth, resolveSchema } from "./resolver.js";
 import { loadSchema } from "./schema.js";
 
-const MAX_JSON_BODY_BYTES = 1024 * 1024;
-
-function sendJson(response, status, payload) {
-  const body = Buffer.from(`${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  response.writeHead(status, {
-    "content-type": "application/json; charset=utf-8",
-    "content-length": body.length,
-  });
-  response.end(body);
+function send(response, status, value) { response.writeHead(status, { "content-type": "application/json; charset=utf-8" }); response.end(`${JSON.stringify(value)}\n`); }
+async function json(request) {
+  let size = 0; const chunks = [];
+  for await (const chunk of request) { size += chunk.length; if (size > 1024 * 1024) throw Object.assign(new Error("request exceeds 1 MiB"), { status: 413 }); chunks.push(chunk); }
+  try { return JSON.parse(Buffer.concat(chunks).toString()); }
+  catch { throw Object.assign(new Error("invalid JSON"), { status: 400 }); }
 }
-
-function notFound(response, message = "route not found") {
-  sendJson(response, 404, { ok: false, error: message });
-}
-
-function methodNotAllowed(response) {
-  sendJson(response, 405, { ok: false, error: "method not allowed" });
-}
-
-function httpError(message, status) {
-  const error = new Error(message);
-  error.status = status;
-  return error;
-}
-
-function requestRevision(request) {
-  const value = request.headers["if-match"];
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  return value.trim().replace(/^W\//, "").replace(/^"|"$/g, "");
-}
-
-async function readJsonBody(request) {
-  const chunks = [];
-  let bytes = 0;
-  for await (const chunk of request) {
-    bytes += chunk.length;
-    if (bytes > MAX_JSON_BODY_BYTES) {
-      throw httpError("request body is too large", 413);
-    }
-    chunks.push(chunk);
-  }
-  const body = Buffer.concat(chunks, bytes).toString("utf8");
-  if (body.trim() === "") {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(body);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw httpError("request body must be a JSON object", 400);
-    }
-    return parsed;
-  } catch (error) {
-    if (error?.status) {
-      throw error;
-    }
-    throw httpError(`invalid JSON body: ${error.message}`, 400);
-  }
-}
-
 export function createApiServer(options = {}) {
   const config = { ...loadConfig(), ...options };
   return createServer(async (request, response) => {
     try {
-      const url = new URL(request.url || "/", "http://localhost");
-      const path = url.pathname.replace(/\/$/, "") || "/";
-      const currentContext = url.searchParams.get("current_context") || config.currentContext;
-      if (path === "/health") {
-        if (request.method !== "GET") {
-          methodNotAllowed(response);
-          return;
+      const url = new URL(request.url, "http://localhost");
+      const route = url.pathname;
+      const currentLimit = Number(url.searchParams.get("current_limit") || config.currentLimit);
+      if (!Number.isInteger(currentLimit) || currentLimit < 1 || currentLimit > 10000) throw new Error("current_limit must be 1..10000");
+      const context = { ...config,
+        backupSettings: { current_context: config.currentContext, current_limit: config.currentLimit },
+        currentContext: url.searchParams.get("current_context") || config.currentContext, currentLimit };
+      if (request.method === "GET") {
+        if (route === "/health") { const value = await resolveHealth(config); return send(response, value.ok ? 200 : 503, value); }
+        if (route === "/definitions") { const { generation, ...schema } = await resolveSchema(config); return send(response, 200, { schema, generation }); }
+        if (route === "/current") return send(response, 200, await resolveCurrentContext(context));
+        if (route === "/records") {
+          const limit = Number(url.searchParams.get("limit") ?? 100), offset = Number(url.searchParams.get("offset") ?? 0);
+          if (!Number.isInteger(limit) || limit < 1 || limit > 1000 || !Number.isInteger(offset) || offset < 0) throw new Error("limit must be 1..1000; offset must be nonnegative");
+          return send(response, 200, await resolveEntitySummaries(url.searchParams.get("kind"), { ...context, limit, offset, query: url.searchParams.get("query"), full: url.searchParams.get("full") === "1" }));
         }
-        const health = await resolveHealth(config);
-        sendJson(response, health.ok ? 200 : 503, health);
-        return;
+        if (route.startsWith("/records/")) {
+          const id = decodeURIComponent(route.slice(9));
+          const value = url.searchParams.has("packet") ? await resolveEntityPacket(id, context) : await resolveEntity(id, { ...context, exact: url.searchParams.has("exact") });
+          return send(response, value ? 200 : 404, value || { error: `record not found: ${id}` });
+        }
       }
-
-      if (path === "/schema") {
-        if (request.method !== "GET") {
-          methodNotAllowed(response);
-          return;
-        }
-        const { source: _source, hash: _hash, core_fields: _coreFields, ...schema } = await resolveSchema(config);
-        sendJson(response, 200, { schema });
-        return;
-      }
-
-      if (path === "/current") {
-        if (request.method !== "GET") {
-          methodNotAllowed(response);
-          return;
-        }
-        const current = await resolveCurrentContext({ ...config, currentContext, brief: url.searchParams.get("brief") === "1" });
-        if (!current) {
-          notFound(response, `current context not found: ${currentContext}`);
-          return;
-        }
-        sendJson(response, 200, current);
-        return;
-      }
-
-      if (path === "/entities") {
-        if (request.method !== "GET") {
-          methodNotAllowed(response);
-          return;
-        }
-        if (url.searchParams.get("summary") === "1") {
-          const limit = Number(url.searchParams.get("limit") ?? 100);
-          const offset = Number(url.searchParams.get("offset") ?? 0);
-          if (!Number.isInteger(limit) || limit < 1 || limit > 1000 || !Number.isInteger(offset) || offset < 0) throw httpError("limit must be 1..1000; offset must be nonnegative", 400);
-          sendJson(response, 200, await resolveEntitySummaries(url.searchParams.get("kind"), { ...config, currentContext, limit, offset, query: url.searchParams.get("q") }));
-        } else {
-          sendJson(response, 200, { entities: await resolveEntities(config) });
-        }
-        return;
-      }
-
-      if (path.startsWith("/entities/")) {
-        const entityId = decodeURIComponent(path.slice("/entities/".length));
-        if (request.method === "POST") {
-          const entity = await createEntityRecord(entityId, await readJsonBody(request), { ...config, currentContext });
-          if (!entity) {
-            sendJson(response, 409, { ok: false, error: `entity already exists: ${entityId}` });
-            return;
-          }
-          sendJson(response, 201, entity);
-          return;
-        }
-        if (request.method === "PUT") {
-          const entity = await updateEntityRecord(entityId, await readJsonBody(request), {
-            ...config,
-            currentContext,
-            expectedUpdatedAt: requestRevision(request),
-          });
-          if (!entity) {
-            notFound(response, `entity not found: ${entityId}`);
-            return;
-          }
-          sendJson(response, 200, entity);
-          return;
-        }
-        if (request.method === "DELETE") {
-          const deleted = await deleteEntityRecord(entityId, { ...config, expectedUpdatedAt: requestRevision(request) });
-          if (!deleted) {
-            notFound(response, `entity not found: ${entityId}`);
-            return;
-          }
-          response.writeHead(204);
-          response.end();
-          return;
-        }
-        if (request.method !== "GET") {
-          methodNotAllowed(response);
-          return;
-        }
-        const entity = await resolveEntity(entityId, config);
-        if (!entity) {
-          notFound(response, `entity not found: ${entityId}`);
-          return;
-        }
-        sendJson(response, 200, entity);
-        return;
-      }
-
-      if (path.startsWith("/packet/entity/")) {
-        if (request.method !== "GET") {
-          methodNotAllowed(response);
-          return;
-        }
-        const entityId = decodeURIComponent(path.slice("/packet/entity/".length));
-        const packet = await resolveEntityPacket(entityId, { ...config, currentContext });
-        if (!packet) {
-          notFound(response, `entity not found: ${entityId}`);
-          return;
-        }
-        sendJson(response, 200, packet);
-        return;
-      }
-
-      notFound(response);
-    } catch (error) {
-      sendJson(response, error?.status || (error instanceof URIError || error.code === "ERR_INVALID_URL" ? 400 : 500), {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+      if (request.method === "POST" && ["/drafts/preview", "/drafts/push"].includes(route)) return send(response, 200, await applyChange(await json(request), { ...context, dryRun: route === "/drafts/preview" }));
+      send(response, 404, { error: "route not found" });
+    } catch (error) { send(response, error.status || 400, { error: error.message }); }
   });
 }
-
 export async function serve(options = {}) {
-  const config = loadConfig();
-  const apiHost = options.apiHost || "127.0.0.1";
-  const apiPort = Number(options.apiPort ?? 8765);
-  if (!Number.isInteger(apiPort) || apiPort < 1 || apiPort > 65535) throw new Error("API port must be an integer from 1 to 65535");
-  const databasePath = options.databasePath || config.databasePath;
-  const schema = options.schema || loadSchema({ ...config, ...options });
-  const database = openDatabase(databasePath, { mustExist: true });
-  try { assertSchemaBinding(database, schema); } catch (error) { database.close(); throw error; }
-  const server = createApiServer({
-    database,
-    databasePath,
-    schema,
-    backupDir: config.backupDir,
-    backupRetention: config.backupRetention,
-  });
-  const closeDatabase = () => database.close();
-  server.on("close", closeDatabase);
-  try {
-    await new Promise((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(apiPort, apiHost, resolve);
-    });
-  } catch (error) {
-    server.off("close", closeDatabase);
-    database.close();
-    throw error;
-  }
-  console.error(`BURO API listening on http://${apiHost}:${apiPort}`);
+  const config = { ...loadConfig(), ...options };
+  if (!hasDirectStorage(config)) throw new Error("serve requires local storage; remove api_url on the registry device");
+  const port = Number(options.apiPort ?? 8765);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("port must be 1..65535");
+  const database = openDatabase(config.databasePath, { mustExist: true });
+  try { assertSchemaBinding(database, loadSchema({ ...config, database }), { checkStorage: true }); }
+  catch (error) { database.close(); throw error; }
+  const server = createApiServer({ ...config, database });
+  server.on("close", () => database.close());
+  try { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(port, options.apiHost || "127.0.0.1", resolve); }); }
+  catch (error) { database.close(); throw error; }
+  console.error(`BURO API listening on http://${options.apiHost || "127.0.0.1"}:${port}`);
   return server;
 }

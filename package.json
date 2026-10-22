@@ -1,6 +1,6 @@
 {
   "name": "buro",
-  "version": "2.0.1",
+  "version": "3.0.0",
   "description": "Typed knowledge storage for AI agents, with YAML-defined schemas. Replaces sprawling AGENTS.md and RAG for durable context.",
   "license": "MIT",
   "keywords": [
@@ -32,7 +32,6 @@
   },
   "files": [
     "src/",
-    "presets/",
     "types/",
     "skills/",
     "integrations/",
@@ -43,6 +42,7 @@
     "README.ru.md"
   ],
   "scripts": {
+    "test": "node --test",
     "start": "node src/index.js",
     "demos": "node scripts/generate-demos.mjs",
     "demos:check": "node scripts/generate-demos.mjs --check",

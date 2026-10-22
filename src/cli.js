@@ -1,438 +1,144 @@
 #!/usr/bin/env node
-import { existsSync, realpathSync } from "node:fs";
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { createRequire } from "node:module";
-import { homedir } from "node:os";
+import { realpathSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-
-import { createApiClient } from "./api-client.js";
-import { agentContract, connectAgent, fullAgentWorkflow } from "./agent.js";
+import { loadConfig, hasDirectStorage } from "./config.js";
+import { connectAgent } from "./agent.js";
 import { serve } from "./api.js";
-import { hasDirectStorage, loadConfig } from "./config.js";
-import {
-  clearDraft,
-  entityToDraftYaml,
-  lineDiff,
-  readDraft,
-  writeDeleteDraft,
-  writeEntityDraft,
-  writeNewEntityDraft,
-} from "./draft.js";
-import { backupDatabase } from "./db.js";
-import { initializeRegistry } from "./migration.js";
-import {
-  renderCliError,
-  renderCurrentContext,
-  renderDraftClearResult,
-  renderDraftDeleteReady,
-  renderDraftDiffResult,
-  renderDraftEntityReady,
-  renderDraftPushResult,
-  renderEntityListLine,
-  renderKindSchema,
-  renderSchemaSummary,
-  renderUsage,
-} from "./cli-output.js";
+import { createApiClient } from "./api-client.js";
+import { initializeRegistry, saveConfig } from "./migration.js";
+import { loadSchema, loadTypeDefinition, typeDefinition } from "./schema.js";
+import { applyChange, resolveCurrentContext, resolveEntity, resolveEntityPacket, resolveEntitySummaries } from "./resolver.js";
+import { clearDraft, draftMetadata, dump, lineDiff, readDraft, writeDraft, writeNewRecordDraft } from "./draft.js";
+import { renderCliError, renderCurrentContext, renderDefinitions, renderEntityListLine, renderUsage } from "./cli-output.js";
 import { renderPacket } from "./packet.js";
-import { exportRegistry, importRegistry } from "./registry.js";
-import {
-  createEntityRecord,
-  deleteEntityRecord,
-  resolveCurrentContext,
-  resolveEntities,
-  resolveEntitySummaries,
-  resolveEntity,
-  resolveEntityPacket,
-  updateEntityRecord,
-} from "./resolver.js";
-import { loadSchema, loadTypeDefinition, normalizeEntity, normalizeSchema } from "./schema.js";
+import { backupDatabase } from "./db.js";
+import { installBackupSchedule, scheduledBackup } from "./backup.js";
+import { exportRegistry, importRegistry, restoreRegistry } from "./registry.js";
 
-const require = createRequire(import.meta.url);
-const { version: PACKAGE_VERSION } = require("../package.json");
-
-function parseArgs(argv) {
-  const args = [];
-  const options = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index];
-    if (!token.startsWith("--")) {
-      args.push(token);
-      continue;
-    }
-    const equal = token.indexOf("=");
-    const name = token.slice(2, equal === -1 ? undefined : equal).replaceAll("-", "_");
-    if (["help", "version", "dry_run", "brief", "full", "adopt"].includes(name)) {
-      if (equal !== -1) throw new Error(`${token.slice(0, equal)} does not take a value`);
-      options[name] = true;
-      continue;
-    }
-    if (equal !== -1) {
-      const value = token.slice(equal + 1);
-      if (!value) throw new Error(`${token.slice(0, equal)} requires a value`);
-      options[name] = value;
-      continue;
-    }
-    const next = argv[index + 1];
-    if (!next || next.startsWith("--")) throw new Error(`${token} requires a value`);
-    else { options[name] = next; index += 1; }
+const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+function parse(argv) {
+  const args = [], options = {};
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (!token.startsWith("--")) { args.push(token); continue; }
+    const [name, ...values] = token.slice(2).split("=");
+    if (["help", "version", "dry-run", "scheduled"].includes(name)) { if (values.length) throw new Error(`${name} takes no value`); options[name] = true; }
+    else { const value = values.length ? values.join("=") : argv[++i]; if (!value || value.startsWith("--")) throw new Error(`--${name} requires a value`); options[name] = value; }
   }
   return { args, options };
 }
-
-function requireArg(value, message) {
-  if (!value) throw new Error(message);
-  return value;
+function syntax(args, options, max, allowed = []) {
+  if (args.length > max) throw new Error(`unexpected argument: ${args[max]}`);
+  for (const name of Object.keys(options)) if (!allowed.includes(name)) throw new Error(`unsupported option: --${name}`);
 }
+function required(value, label) { if (!value) throw new Error(`${label} is required; see buro help`); return value; }
+function direct(command, config) { if (!hasDirectStorage(config)) throw new Error(`${command} runs on the device holding SQLite; this client uses ${config.apiUrl}`); }
 
-function rejectOptions(options, allowed = []) {
-  const names = Object.keys(options).filter((name) => !allowed.includes(name));
-  if (names.length) throw new Error(`unsupported option: --${names[0].replaceAll("_", "-")}`);
-}
-
-function requireDirectStorage(command, config) {
-  if (!hasDirectStorage(config)) {
-    throw new Error(`${command} requires local BURO storage. Run it in local/central mode on ${config.centralHost}.`);
-  }
-}
-
-function localOptions(config, schema) {
+function clientFor(config) {
+  if (config.apiUrl) return createApiClient(config.apiUrl, { timeoutMs: config.apiTimeoutMs, currentContext: config.currentContext, currentLimit: config.currentLimit });
   return {
-    databasePath: config.databasePath,
-    currentContext: config.currentContext,
-    backupDir: config.backupDir,
-    backupRetention: config.backupRetention,
-    schema,
+    schema: async () => loadSchema(config),
+    entity: (id, exact) => resolveEntity(id, { ...config, exact }),
+    packet: id => resolveEntityPacket(id, config),
+    entitySummaries: (kind, page) => resolveEntitySummaries(kind, { ...config, ...page }),
+    current: () => resolveCurrentContext(config),
+    change: (change, dryRun) => applyChange(change, { ...config, dryRun }),
   };
 }
-
-function dataClient(config, localSchema) {
-  if (hasDirectStorage(config)) {
-    const options = localOptions(config, localSchema);
-    return {
-      schema: async () => localSchema,
-      entitySummaries: (kind, page) => resolveEntitySummaries(kind, { ...options, ...page }),
-      current: (brief) => resolveCurrentContext({ ...options, brief }),
-      entity: (id) => resolveEntity(id, options),
-      createEntity: (id, entity) => createEntityRecord(id, entity, options),
-      updateEntity: (id, entity, revision) => updateEntityRecord(id, entity, { ...options, expectedUpdatedAt: revision }),
-      deleteEntity: (id, revision) => deleteEntityRecord(id, { ...options, expectedUpdatedAt: revision }),
-      packetText: async (id) => {
-        const packet = await resolveEntityPacket(id, options);
-        return packet ? renderPacket(packet) : null;
-      },
-    };
-  }
-  const api = createApiClient(config.apiUrl);
-  return {
-    schema: async () => normalizeSchema(await api.schema(), `API ${config.apiUrl}/schema`),
-    entitySummaries: (kind, page) => api.entitySummaries(kind, config.currentContext, page),
-    current: async (brief) => {
-      try {
-        return await api.current(config.currentContext, brief);
-      } catch (error) {
-        if (error instanceof Error && error.message.startsWith("BURO API 404: current context not found:")) return null;
-        throw error;
-      }
-    },
-    entity: (id) => api.entity(id),
-    createEntity: (id, entity) => api.createEntity(id, entity, config.currentContext),
-    updateEntity: (id, entity, revision) => api.updateEntity(id, entity, revision, config.currentContext),
-    deleteEntity: (id, revision) => api.deleteEntity(id, revision),
-    packetText: async (id) => renderPacket(await api.entityPacket(id, config.currentContext)),
-  };
-}
-
-async function getEntityOrNull(client, id) {
-  try {
-    return await client.entity(id);
-  } catch (error) {
-    if (error?.status === 404) return null;
-    throw error;
-  }
-}
-
-async function printCurrentContext(client, config, schema, brief) {
-  const current = await client.current(brief);
-  const context = current?.context;
-  if (!context) throw new Error("BURO API did not return machine context");
-  process.stdout.write(renderCurrentContext({
-    currentContext: context.id,
-    home: process.env.HOME || homedir(),
-    contextRoot: schema.context?.root_field ? context[schema.context.root_field] : undefined,
-    packetText: current.packet ? renderPacket(current.packet) : "No machine-wide rules recorded.",
-    members: current.members,
-    brief,
-  }));
-}
-
-function assertFreshRevision(entity, metadata) {
-  if (entity.updated_at !== metadata.base_updated_at) {
-    throw new Error(`entity changed after this draft was created: ${entity.id}; pull a fresh draft and review again`);
-  }
-}
-
-function sameEntity(left, right) {
-  const { updated_at: _leftRevision, ...leftFacts } = left;
-  const { updated_at: _rightRevision, ...rightFacts } = right;
-  return JSON.stringify(leftFacts) === JSON.stringify(rightFacts);
-}
-
-async function runDraftCommand(args, options, config, client, schema) {
-  rejectOptions(options);
-  const action = args[1] || "help";
-  const target = config.mode === "client" ? `API ${config.apiUrl}` : `SQLite ${config.databasePath}`;
-  const draftOptions = { draftPath: config.draftPath };
-  if (action === "help") {
-    console.log("Usage: buro draft pull/new/delete/diff/push/clear");
-    return 0;
-  }
-  if (action === "clear") {
-    const filePath = await clearDraft(draftOptions);
-    process.stdout.write(renderDraftClearResult({ filePath }));
-    return 0;
-  }
-  if (action === "pull") {
-    const id = requireArg(args[2], "draft pull requires an entity id");
-    const entity = await getEntityOrNull(client, id);
-    if (!entity) throw new Error(`entity not found: ${id}`);
-    const filePath = await writeEntityDraft(entity, draftOptions, schema);
-    process.stdout.write(renderDraftEntityReady({ filePath, id, mode: "edit entity", target }));
-    return 0;
-  }
-  if (action === "new") {
-    const id = requireArg(args[2], "draft new requires an entity id");
-    const kind = args[3] || schema.default_kind;
-    const existing = await getEntityOrNull(client, id);
-    if (existing?.id === id) throw new Error(`entity already exists: ${id}`);
-    const filePath = await writeNewEntityDraft(id, kind, draftOptions, schema);
-    process.stdout.write(renderDraftEntityReady({ filePath, id, mode: `new ${kind}`, target }));
-    return 0;
-  }
-  if (action === "delete") {
-    const id = requireArg(args[2], "draft delete requires an entity id");
-    const entity = await getEntityOrNull(client, id);
-    if (!entity) throw new Error(`entity not found: ${id}`);
-    const filePath = await writeDeleteDraft(entity, draftOptions);
-    process.stdout.write(renderDraftDeleteReady({ filePath, id, target }));
-    return 0;
-  }
-  if (action === "diff") {
-    const draft = await readDraft(draftOptions, schema);
-    if (draft.mode === "empty") throw new Error(`BURO draft is empty: ${draft.filePath}`);
-    if (draft.mode === "delete") {
-      const existing = await getEntityOrNull(client, draft.id);
-      if (!existing) throw new Error(`entity not found: ${draft.id}`);
-      assertFreshRevision(existing, draft.metadata);
-      process.stdout.write(renderDraftDiffResult({
-        id: draft.id,
-        mode: "delete entity",
-        diffText: lineDiff(
-          entityToDraftYaml(existing, schema, { metadata: draft.metadata }),
-          "",
-          { fromLabel: `BURO entity ${draft.id}`, toLabel: "delete draft" },
-        ),
-      }));
-      return 0;
-    }
-    const found = await getEntityOrNull(client, draft.entity.id);
-    const existing = draft.mode === "create" && found?.id !== draft.entity.id ? null : found;
-    draft.entity = normalizeEntity(draft.entity, schema, { currentContext: config.currentContext, previous: existing });
-    if (draft.mode === "create" && existing?.id === draft.entity.id) throw new Error(`entity already exists: ${draft.entity.id}`);
-    if (draft.mode === "update") {
-      if (!existing) throw new Error(`entity not found: ${draft.entity.id}`);
-      assertFreshRevision(existing, draft.metadata);
-    }
-    process.stdout.write(renderDraftDiffResult({
-      id: draft.entity.id,
-      mode: draft.mode === "create" ? "new entity" : "edit entity",
-      diffText: lineDiff(
-        existing ? entityToDraftYaml(existing, schema, { metadata: draft.metadata }) : "",
-        entityToDraftYaml(draft.entity, schema, { metadata: draft.metadata }),
-        { fromLabel: existing ? `BURO entity ${draft.entity.id}` : "new entity", toLabel: "draft" },
-      ),
-    }));
-    return 0;
-  }
-  if (action === "push") {
-    const draft = await readDraft(draftOptions, schema);
-    if (draft.mode === "empty") throw new Error(`BURO draft is empty: ${draft.filePath}`);
-    if (draft.mode === "delete") {
-      await client.deleteEntity(draft.id, draft.metadata.base_updated_at);
-      const filePath = await clearDraft(draftOptions);
-      process.stdout.write(renderDraftPushResult({ action: "deleted", id: draft.id, filePath }));
-      return 0;
-    }
-    let action;
-    if (draft.mode === "create") {
-      draft.entity = normalizeEntity(draft.entity, schema, { currentContext: config.currentContext });
-      await client.createEntity(draft.entity.id, draft.entity);
-      action = "created";
-    } else {
-      const existing = await getEntityOrNull(client, draft.entity.id);
-      if (!existing) throw new Error(`entity not found: ${draft.entity.id}`);
-      assertFreshRevision(existing, draft.metadata);
-      draft.entity = normalizeEntity(draft.entity, schema, { currentContext: config.currentContext, previous: existing });
-      if (!sameEntity(existing, draft.entity)) {
-        await client.updateEntity(draft.entity.id, draft.entity, draft.metadata.base_updated_at);
-        action = "updated";
-      } else {
-        action = "unchanged";
-      }
-    }
-    const filePath = await clearDraft(draftOptions);
-    process.stdout.write(renderDraftPushResult({ action, id: draft.entity.id, filePath }));
-    return 0;
-  }
-  throw new Error(`unknown draft action: ${action}`);
-}
+async function entityOrNull(client, id, exact = false) { try { return await client.entity(id, exact); } catch (error) { if (error.status === 404) return null; throw error; } }
+function ready(file) { console.log(`Draft: ${file}\nEdit the YAML, then:\n  buro draft diff "${file}"\n  buro draft push "${file}"`); }
 
 export async function runCli(argv = process.argv.slice(2)) {
-  const { args, options } = parseArgs(argv);
-  if (options.version || args[0] === "version") {
-    rejectOptions(options, ["version"]);
-    console.log(PACKAGE_VERSION);
-    return 0;
-  }
-
-  if (options.help || !args.length || args[0] === "help") {
-    rejectOptions(options, ["help"]);
-    process.stdout.write(renderUsage());
-    return 0;
-  }
-  const limits = { connect: 2, agent: 1, init: 1, backup: 1, serve: 1, export: 2, import: 2, current: 1, list: 2, search: 2, schema: 2, get: 2 };
-  const limit = args[0] === "types" ? (args[1] === "copy" ? 4 : 2)
-    : args[0] === "draft" ? (args[1] === "new" ? 4 : ["pull", "delete"].includes(args[1]) ? 3 : 2)
-      : limits[args[0]] ?? 1;
-  if (args.length > limit) throw new Error(`unexpected argument: ${args[limit]}; use buro help for command syntax`);
-
-  const command = args[0];
-  if (command === "agent") {
-    rejectOptions(options, ["full"]);
-    process.stdout.write(options.full ? await fullAgentWorkflow() : agentContract());
-    return 0;
-  }
-  if (command === "connect") {
-    rejectOptions(options, ["path"]);
-    const files = await connectAgent(requireArg(args[1], "connect requires an agent name"), options);
-    console.log(`BURO connected:\n${files.join("\n")}\nStart a new agent session; restart OpenCode/OpenCodez after plugin installation.`);
-    return 0;
-  }
-  if (command === "types" && args[1] === "copy") {
-    rejectOptions(options);
-    const { filePath } = loadTypeDefinition(requireArg(args[2], "types copy requires a built-in type"));
-    const target = path.resolve(requireArg(args[3], "types copy requires a destination YAML file"));
-    if (existsSync(target)) throw new Error(`file already exists: ${target}`);
-    await mkdir(path.dirname(target), { recursive: true });
-    await copyFile(filePath, target);
-    console.log(`Type definition copied: ${target}\nSelect it in config.json type_files instead of the built-in name, then run buro init --dry-run and buro init.`);
-    return 0;
-  }
+  const { args, options } = parse(argv);
+  const command = options.help ? "help" : options.version ? "version" : args[0] || "help";
+  if (command === "version") { syntax(args, options, 1, ["version"]); console.log(VERSION); return; }
+  if (command === "connect") { syntax(args, options, 2, ["path"]); console.log(await connectAgent(required(args[1], "agent name"), options)); return; }
   const config = loadConfig();
-  if (command === "backup") {
-    rejectOptions(options);
-    requireDirectStorage(command, config);
-    console.log(`BURO backup created: ${await backupDatabase(config.databasePath, config)}`);
-    return 0;
+  if (command === "help") {
+    syntax(args, options, 1, ["help"]);
+    console.log(`BURO ${VERSION}\nMemory: ${config.apiUrl || config.databasePath}\nConfig: ${config.configPath}\n\n${renderUsage()}`);
+    try { process.stdout.write(`\nActive definitions\n${renderDefinitions(await clientFor(config).schema())}`); }
+    catch (error) { console.log(`\nActive definitions unavailable: ${error.message}`); }
+    return;
   }
-  const direct = hasDirectStorage(config);
-  const localSchema = direct ? loadSchema(config) : null;
-
   if (command === "init") {
-    rejectOptions(options, ["dry_run"]);
-    requireDirectStorage(command, config);
-    const result = await initializeRegistry(config, localSchema, { dryRun: options.dry_run === true });
-    console.log(`BURO SQLite ${options.dry_run ? "preview" : "ready"}: ${config.databasePath}`);
-    console.log(`Preset: ${localSchema.id} v${localSchema.version}`);
-    if (result.backupPath) console.log(`Pre-init backup: ${result.backupPath}`);
-    console.log(`Records: ${result.count}; migrated: ${result.transformed}`);
-    if (result.created) console.log("Ready to add records; no host record is required.\nConnect your agent: buro connect <agent>");
-    if (!options.dry_run && !existsSync(config.configPath)) {
-      await mkdir(path.dirname(config.configPath), { recursive: true });
-      const initial = process.env.BURO_SCHEMA_PATH ? { schema_path: config.schemaPath }
-        : config.preset === "starter" ? { type_files: ["project", "service", "host", "item"] } : { preset: config.preset };
-      await writeFile(config.configPath, `${JSON.stringify(initial, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-      console.log(`Configuration: ${config.configPath}`);
+    syntax(args, options, 1, ["dry-run"]);
+    // v2 used an endpoint in central mode to describe its own server.
+    const local = ["central", "local"].includes(config.previousConfig.mode) ? { ...config, apiUrl: "" } : config;
+    if (local.apiUrl) {
+      await clientFor(local).schema();
+      if (!options["dry-run"]) { const { mode, central_host, preset, schema_path, type_files, draft_path, ...settings } = local.previousConfig; await saveConfig(local, settings); }
+      console.log(`Shared memory ready: ${local.apiUrl}. This device holds no database or backup schedule.`); return;
     }
-    if (result.adopted) console.log(options.dry_run ? "Definitions can be adopted after complete saved-record validation." : "Definitions validated against all saved records and adopted.");
-    return 0;
+    const result = await initializeRegistry(local, { dryRun: Boolean(options["dry-run"]) });
+    console.log(`BURO ${options["dry-run"] ? "preview" : "ready"}: ${local.databasePath}\nRecords: ${result.count}; types: ${Object.keys(result.schema.kinds).join(", ")}${result.upgraded ? " (preserved as custom definitions)" : ""}`);
+    if (result.backupPath) console.log(`Pre-upgrade snapshot: ${result.backupPath}`);
+    if (result.preservedDraftPath) console.log(`Previous single draft preserved: ${result.preservedDraftPath}`);
+    if (!options["dry-run"] && local.backupSchedule) { console.log(await installBackupSchedule(local)); for (const file of await scheduledBackup(local)) console.log(`Scheduled snapshot: ${file}`); }
+    else if (!options["dry-run"]) console.log("Backup schedule disabled by config.json backup_schedule=false.");
+    return;
   }
-  if (command === "serve") {
-    rejectOptions(options, ["host", "port"]);
-    requireDirectStorage(command, config);
-    await serve({ databasePath: config.databasePath, schema: localSchema, apiHost: options.host, apiPort: options.port });
-    return 0;
+  if (command === "backup") { syntax(args, options, 1, ["scheduled"]); direct(command, config); const files = options.scheduled ? await scheduledBackup(config) : [await backupDatabase(config.databasePath, config)]; for (const file of files) console.log(`BURO backup created: ${file}`); return; }
+  if (command === "serve") { syntax(args, options, 1, ["host", "port"]); direct(command, config); await serve({ ...config, apiHost: options.host, apiPort: options.port }); return; }
+  if (["export", "import", "restore"].includes(command)) {
+    syntax(args, options, 2, command === "export" ? [] : ["dry-run"]); direct(command, config);
+    const file = required(args[1], "file");
+    const result = command === "export" ? await exportRegistry(file, config) : await (command === "import" ? importRegistry : restoreRegistry)(file, config, { dryRun: Boolean(options["dry-run"]) });
+    console.log(dump(result)); return;
   }
-  if (command === "export") {
-    rejectOptions(options);
-    requireDirectStorage(command, config);
-    const filePath = requireArg(args[1], "export requires a destination file");
-    const result = await exportRegistry(filePath, await resolveEntities(localOptions(config, localSchema)), localSchema);
-    console.log(`BURO registry exported: ${result.filePath}`);
-    console.log(`Entities: ${result.count}`);
-    return 0;
-  }
-  if (command === "import") {
-    rejectOptions(options, ["adopt"]);
-    requireDirectStorage(command, config);
-    const filePath = requireArg(args[1], "import requires a registry file");
-    const result = await importRegistry(filePath, { ...config, schema: localSchema, adopt: options.adopt === true });
-    console.log(`BURO registry imported: ${result.source}`);
-    console.log(`Entities: ${result.count}`);
-    console.log(`Previous entities: ${result.previousCount}`);
-    if (result.adopted) console.log(`Preset adopted: ${result.sourcePreset.id} v${result.sourcePreset.version} -> ${localSchema.id} v${localSchema.version}`);
-    if (result.backupPath) console.log(`Pre-import backup: ${result.backupPath}`);
-    return 0;
-  }
-
-  rejectOptions(options, command === "current" ? ["brief"] : ["list", "search"].includes(command) ? ["limit", "offset"] : []);
-  const client = dataClient(config, localSchema);
-  const needsSchema = !command || ["help", "schema", "types", "draft", "current"].includes(command);
-  const schema = direct ? localSchema : needsSchema ? await client.schema() : null;
-  if (command === "schema") {
-    process.stdout.write(args[1] ? renderKindSchema(schema, args[1]) : renderSchemaSummary(schema));
-    return 0;
-  }
-  if (command === "types") {
-    process.stdout.write(args[1] ? renderKindSchema(schema, args[1]) : `${[
-      "BURO record types",
-      `default: ${schema.default_kind}`,
-      ...Object.entries(schema.kinds).map(([name, definition]) => `- ${name}${definition.label ? ` — ${definition.label}` : ""}`),
-    ].join("\n")}\n`);
-    return 0;
-  }
-  if (command === "list" || command === "search") {
-    const kind = command === "list" ? args[1] : undefined;
-    if (kind && schema && !Object.hasOwn(schema.kinds, kind)) throw new Error(`unsupported entity kind: ${kind}`);
-    const limit = Number(options.limit ?? 100);
-    const offset = Number(options.offset ?? 0);
+  const client = clientFor(config);
+  if (["list", "search"].includes(command)) {
+    syntax(args, options, 2, ["limit", "offset"]);
+    const limit = Number(options.limit ?? 100), offset = Number(options.offset ?? 0);
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000 || !Number.isInteger(offset) || offset < 0) throw new Error("limit must be 1..1000; offset must be nonnegative");
-    const query = command === "search" ? requireArg(args[1], "search requires text") : undefined;
-    const result = await client.entitySummaries(kind, { limit, offset, query });
+    const page = { limit, offset, ...(command === "search" ? { query: required(args[1], "search text") } : {}) };
+    const result = await client.entitySummaries(command === "list" ? args[1] : undefined, page);
     for (const entity of result.entities) console.log(renderEntityListLine(entity, result.current_context));
     if (result.entities.length === limit) console.log(`# Next page: --limit ${limit} --offset ${offset + limit}`);
-    return 0;
+    return;
   }
-  if (command === "current") {
-    await printCurrentContext(client, config, schema, options.brief === true);
-    return 0;
+  if (command === "current") { syntax(args, options, 1); process.stdout.write(renderCurrentContext(await client.current(), renderPacket)); return; }
+  if (command === "draft") {
+    const action = required(args[1], "draft action");
+    syntax(args, options, action === "new" ? 4 : 3);
+    const target = required(args[2], "record or draft file");
+    if (["diff", "push", "clear"].includes(action)) {
+      if (action === "clear") { console.log(`Discarded: ${await clearDraft(target)}`); return; }
+      const { metadata, value } = await readDraft(target);
+      const result = await client.change({ metadata, value }, action === "diff");
+      if (action === "diff") { console.log(`${metadata.subject}: ${result.id}`); process.stdout.write(lineDiff(result.before ? dump(result.before) : "", result.after ? dump(result.after) : "")); if (result.default_kind) console.log(`Default type after change: ${result.default_kind}`); }
+      else { await clearDraft(target); console.log(`${result.action}: ${result.id}`); }
+      return;
+    }
+    const schema = await client.schema();
+    if (action === "new") { if (await entityOrNull(client, target, true)) throw new Error(`record already exists: ${target}`); ready(await writeNewRecordDraft(target, args[3] || schema.default_kind, schema)); return; }
+    if (!["pull", "delete"].includes(action)) throw new Error(`unknown draft action: ${action}`);
+    const entity = await entityOrNull(client, target);
+    if (!entity) throw new Error(`record not found: ${target}`);
+    const { updated_at, ...facts } = entity;
+    const metadata = draftMetadata(schema, "record", action === "delete" ? "delete" : "update", entity.id, updated_at);
+    ready(await writeDraft(action === "delete" ? null : facts, metadata, schema)); return;
   }
-  if (command === "draft") return runDraftCommand(args, options, config, client, schema);
-  const text = await client.packetText(command === "get" ? requireArg(args[1], "get requires an id or name") : command);
-  if (!text) throw new Error(`entity not found: ${command}`);
-  process.stdout.write(text);
-  return 0;
+  if (command === "types") {
+    syntax(args, options, 3, ["from"]);
+    const action = required(args[1], "types new, edit, or delete"), id = required(args[2], "type ID");
+    if (!["new", "edit", "delete"].includes(action) || (options.from && action !== "new")) throw new Error("use types new <id> [--from type], types edit <id>, or types delete <id>");
+    const schema = await client.schema();
+    const kind = schema.kinds[id];
+    if (action === "new" ? kind : !kind) throw new Error(action === "new" ? `type already exists: ${id}` : `unknown type: ${id}`);
+    if (action !== "new" && kind.origin === "builtin") throw new Error(`copy ${id} to a new ID with types new --from`);
+    let value = null;
+    if (action === "new") value = options.from ? { ...(["project", "service", "host"].includes(options.from) ? loadTypeDefinition(options.from) : typeDefinition(schema, options.from)), id } : { id, label: id, fields: {} };
+    if (action === "edit") value = typeDefinition(schema, id);
+    ready(await writeDraft(value, draftMetadata(schema, "type", action === "new" ? "create" : action === "edit" ? "update" : "delete", id, kind?.revision), schema)); return;
+  }
+  syntax(args, options, command === "get" ? 2 : 1);
+  const id = command === "get" ? required(args[1], "record ID or name") : command;
+  const packet = await client.packet(id);
+  if (!packet) throw new Error(`record not found: ${id}`);
+  process.stdout.write(renderPacket(packet));
 }
 
-function isMainModule() {
-  return process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-}
-
-if (isMainModule()) {
-  try {
-    await runCli();
-  } catch (error) {
-    process.stderr.write(renderCliError(error));
-    process.exit(1);
-  }
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+  try { await runCli(); } catch (error) { process.stderr.write(renderCliError(error)); process.exitCode = 1; }
 }

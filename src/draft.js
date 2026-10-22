@@ -1,338 +1,89 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { mkdtemp, readFile, rm, rmdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import yaml from "js-yaml";
+import { newEntity } from "./schema.js";
 
-import { fieldDefinition, kindFields, newEntity, normalizeEntity } from "./schema.js";
+export const dump = value => yaml.dump(value, { noRefs: true, lineWidth: -1, sortKeys: false });
 
-export const DRAFT_FILE_NAME = "BURO_DRAFT.yaml";
-const META_KEY = "__buro";
-const DRAFT_VERSION = 1;
-const OPTIONAL = "# OPTIONAL TO FILL — uncomment only when applicable and verified:";
-
-function defaultInstanceRoot() {
-  return path.join(homedir(), ".local", "share", "buro");
+export function draftMetadata(schema, subject, mode, id, revision) {
+  return { version: 3, subject, mode, base_id: id, generation: schema.generation,
+    type_revisions: Object.fromEntries(Object.entries(schema.kinds).map(([id, kind]) => [id, kind.revision])),
+    ...(revision ? { base_revision: revision } : {}) };
 }
 
-export function resolveInstanceRoot(options = {}) {
-  return path.resolve(options.instance_root || options.instanceRoot || process.env.BURO_ROOT || defaultInstanceRoot());
+function fieldGuide(name, field, indent = "") {
+  return [`# ${indent}${name} (${field.type}${field.required ? ", required" : ""})${field.guide ? `: ${field.guide}` : ""}`,
+    ...Object.entries(field.fields || {}).flatMap(([key, nested]) => fieldGuide(key, nested, `${indent}  `))];
 }
 
-export function resolveDraftPath(options = {}) {
-  return path.resolve(options.draft_path || options.draftPath || process.env.BURO_DRAFT_PATH || path.join(resolveInstanceRoot(options), DRAFT_FILE_NAME));
-}
-
-function isMeaningfulLine(line) {
-  const trimmed = line.trim();
-  return trimmed !== "" && !trimmed.startsWith("#");
-}
-
-async function writeDraftFile(filePath, contents) {
-  await mkdir(path.dirname(filePath), { recursive: true });
-  try {
-    await writeFile(filePath, contents.endsWith("\n") ? contents : `${contents}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-      flag: "wx",
-    });
-  } catch (error) {
-    if (error?.code === "EEXIST") {
-      throw new Error(`BURO draft already exists: ${filePath}; push it or run \`buro draft clear\` first`);
-    }
-    throw error;
-  }
-  return filePath;
-}
-
-function scalarToYaml(value) {
-  if (value === null || value === undefined) return "";
-  const text = String(value);
-  if (text.includes("\n")) return JSON.stringify(text);
-  return yaml.dump(text, { lineWidth: -1, quotingType: '"' }).trimEnd();
-}
-
-function valuePresent(value) {
-  if (value === null || value === undefined || value === "") return false;
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === "object") return Object.keys(value).length > 0;
-  return true;
-}
-
-function nestedToYaml(name, value, field, indent = "") {
-  if (["record", "record-list", "string-list"].includes(field.type)) {
-    return yaml.dump({ [name]: value }, { noRefs: true, lineWidth: -1 }).trimEnd().split("\n").map((line) => `${indent}${line}`);
-  }
-  if (field.type === "text" && String(value).includes("\n")) {
-    const [indicator, ...lines] = yaml.dump(value, { lineWidth: -1 }).trimEnd().split("\n");
-    return [`${indent}${name}: ${indicator}`, ...lines.map((line) => `${indent}  ${line}`)];
-  }
-  return [`${indent}${name}: ${typeof value === "string" ? scalarToYaml(value) : String(value)}`];
-}
-
-function recordToYaml(name, value, field) {
-  const lines = [`${name}:`];
-  const missing = [];
-  for (const [nestedName, nestedField] of Object.entries(field.fields)) {
-    if (valuePresent(value?.[nestedName])) lines.push(...nestedToYaml(nestedName, value[nestedName], nestedField, "  "));
-    else missing.push(nestedName);
-  }
-  if (missing.length) lines.push(`  ${OPTIONAL}`, ...missing.map((nestedName) => `  # ${nestedName}:`));
-  return lines;
-}
-
-function recordListToYaml(name, values, field) {
-  const lines = yaml.dump(values, { noRefs: true, lineWidth: -1, quotingType: '"' }).trimEnd().split("\n");
-  return [`${name}:`, ...lines.map((line) => `  ${line}`)];
-}
-
-function fieldToYaml(name, value, field) {
-  if (field.type === "record") return recordToYaml(name, value, field);
-  if (field.type === "record-list") return recordListToYaml(name, value);
-  if (field.type === "string-list") return [`${name}:`, ...value.map((entry) => `  - ${scalarToYaml(entry)}`)];
-  if (field.type === "text") {
-    const text = String(value);
-    return text.includes("\n") ? nestedToYaml(name, text, field) : [`${name}: ${scalarToYaml(text)}`];
-  }
-  return [`${name}: ${typeof value === "string" ? scalarToYaml(value) : String(value)}`];
-}
-
-function optionalFieldToYaml(name, field) {
-  const guide = field.guide ? [`# ${name} — ${field.guide}`] : [];
-  if (field.type === "record") {
-    return [...guide, `# ${name}:`, ...Object.keys(field.fields).map((nestedName) => `#   ${nestedName}:`)];
-  }
-  if (field.type === "record-list") {
-    const fields = Object.keys(field.fields);
-    return [
-      ...guide,
-      `# ${name}:`,
-      ...(fields.length ? [`#   - ${fields[0]}:`, ...fields.slice(1).map((nestedName) => `#     ${nestedName}:`)] : []),
-    ];
-  }
-  if (field.type === "string-list") return [...guide, `# ${name}: []`];
-  return [...guide, `# ${name}:`];
-}
-
-function requiredFieldToYaml(name, field) {
-  const guide = field.guide ? [`# ${name} — ${field.guide}`, "# REQUIRED"] : ["# REQUIRED"];
-  if (field.type === "record") {
-    return [
-      ...guide,
-      `${name}:`,
-      ...Object.entries(field.fields).map(([nestedName, nested]) => nested.required ? `  ${nestedName}:` : `  # ${nestedName}:`),
-    ];
-  }
-  if (field.type === "record-list") {
-    const entries = Object.entries(field.fields);
-    const first = entries.find(([, nested]) => nested.required) || entries[0];
-    const rest = entries.filter(([nestedName]) => nestedName !== first?.[0]);
-    return [
-      ...guide,
-      `${name}:`,
-      ...(first ? [`  - ${first[0]}:`, ...rest.map(([nestedName, nested]) => `    ${nested.required ? "" : "# "}${nestedName}:`)] : []),
-    ];
-  }
-  if (field.type === "string-list") return [...guide, `${name}: []`];
-  return [...guide, `${name}:`];
-}
-
-function populatedFieldToYaml(name, value, field) {
-  return [...(field.guide ? [`# ${name} — ${field.guide}`] : []), ...fieldToYaml(name, value, field)];
-}
-
-function sectionGuideToYaml(name, schema) {
-  const section = schema.sections?.[name];
-  if (!section) return [];
-  return [
-    `# ${name.toUpperCase()} — ${section.guide}`,
-    ...(section.draft_guide ? [`# Draft: ${section.draft_guide}`] : []),
-  ];
-}
-
-function orderedSections(entity, schema) {
-  const sections = [];
-  for (const fieldName of kindFields(schema, entity.kind)) {
-    const sectionName = fieldDefinition(schema, entity.kind, fieldName).section || "facts";
-    let section = sections.find((entry) => entry.name === sectionName);
-    if (!section) {
-      section = { name: sectionName, fields: [] };
-      sections.push(section);
-    }
-    section.fields.push(fieldName);
-  }
-  return sections;
-}
-
-function metadataLines(metadata) {
-  return [
-    `${META_KEY}:`,
-    `  version: ${DRAFT_VERSION}`,
-    `  mode: ${metadata.mode}`,
-    ...(metadata.base_id ? [`  base_id: ${scalarToYaml(metadata.base_id)}`] : []),
-    ...(metadata.base_updated_at ? [`  base_updated_at: ${JSON.stringify(String(metadata.base_updated_at))}`] : []),
-  ];
-}
-
-export function entityToDraftYaml(entity = {}, schema, options = {}) {
-  const normalized = normalizeEntity(entity, schema, { allowMissingRequired: options.allowIncomplete === true });
-  const lines = [
-    "# BURO entity draft. Existing facts are active YAML fields.",
-    "# Missing fields are optional unless marked REQUIRED. Unknown facts stay empty.",
-    "",
-    ...metadataLines(options.metadata || { mode: "update", base_id: normalized.id, base_updated_at: normalized.updated_at }),
-    "",
-    `id: ${scalarToYaml(normalized.id)}`,
-    `name: ${scalarToYaml(normalized.name)}`,
-    `kind: ${scalarToYaml(normalized.kind)}`,
-  ];
-  for (const section of orderedSections(normalized, schema)) {
-    lines.push("", ...sectionGuideToYaml(section.name, schema));
-    let optionalOpen = false;
-    for (const fieldName of section.fields) {
-      const field = fieldDefinition(schema, entity.kind, fieldName);
-      const value = normalized[fieldName];
-      if (!valuePresent(value) && field.draft_optional === false) continue;
-      if (valuePresent(value)) {
-        optionalOpen = false;
-        lines.push(...populatedFieldToYaml(fieldName, value, field));
-      } else if (field.required) {
-        optionalOpen = false;
-        lines.push(...requiredFieldToYaml(fieldName, field));
-      } else {
-        if (!optionalOpen) lines.push(OPTIONAL);
-        optionalOpen = true;
-        lines.push(...optionalFieldToYaml(fieldName, field));
+export function draftYaml(value, metadata, schema) {
+  const lines = ["# BURO draft. Keep __buro metadata. Unknown optional facts stay empty.", dump({ __buro: metadata }).trimEnd()];
+  if (value) {
+    lines.push("", dump(value).trimEnd());
+    if (metadata.subject === "record") {
+      for (const [name, field] of Object.entries(schema.kinds[value.kind].definitions)) {
+        lines.push("", ...fieldGuide(name, field));
+        if (!Object.hasOwn(value, name)) lines.push(`# ${name}: ${field.type.endsWith("-list") ? "[]" : ""}`);
       }
     }
   }
+  lines.push("", "# Review: buro draft diff <this-file>", "# Apply:  buro draft push <this-file>");
   return `${lines.join("\n")}\n`;
 }
 
-export function validateDraftEntity(entity, schema) {
-  return normalizeEntity(entity, schema);
+export async function writeDraft(value, metadata, schema) {
+  const directory = await mkdtemp(path.join(tmpdir(), "buro-draft-"));
+  const file = path.join(directory, "change.yaml");
+  await writeFile(file, draftYaml(value, metadata, schema), { mode: 0o600, flag: "wx" });
+  return file;
 }
+export async function writeRecordDraft(entity, mode, schema) {
+  return writeDraft(mode === "delete" ? null : entity, draftMetadata(schema, "record", mode, entity.id, entity.updated_at), schema);
+}
+export async function writeNewRecordDraft(id, kind, schema) { return writeRecordDraft(newEntity(id, kind, schema), "create", schema); }
 
-export async function writeEntityDraft(entity, options = {}, schema) {
-  const filePath = resolveDraftPath(options);
-  const metadata = { mode: "update", base_id: entity.id, base_updated_at: entity.updated_at };
-  await writeDraftFile(filePath, entityToDraftYaml(entity, schema, { metadata }));
+export async function readDraft(file) {
+  if (!file) throw new Error("provide the YAML file printed when creating the draft");
+  const filePath = path.resolve(file);
+  const parsed = yaml.load(await readFile(filePath, "utf8"));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !parsed.__buro) throw new Error("not a BURO draft");
+  const { __buro: metadata, ...value } = parsed;
+  const allowed = ["version", "subject", "mode", "base_id", "generation", "type_revisions", "base_revision"];
+  if (Object.keys(metadata).some(key => !allowed.includes(key))) throw new Error("unknown draft metadata; prepare a fresh draft");
+  if (metadata.version !== 3 || !metadata.base_id || !metadata.generation) throw new Error("obsolete or incomplete draft; prepare a new draft");
+  if (metadata.mode === "delete" && Object.keys(value).length) throw new Error("deletion draft must contain only metadata");
+  return { filePath, metadata, value: metadata.mode === "delete" ? null : value };
+}
+export async function clearDraft(file) {
+  const { filePath } = await readDraft(file);
+  await rm(filePath);
+  const directory = path.dirname(filePath);
+  if (path.basename(directory).startsWith("buro-draft-") && path.dirname(directory) === tmpdir()) await rmdir(directory).catch(error => { if (error.code !== "ENOTEMPTY") throw error; });
   return filePath;
 }
 
-export async function writeNewEntityDraft(id, kind, options = {}, schema) {
-  const filePath = resolveDraftPath(options);
-  const entity = newEntity(id, kind, schema);
-  await writeDraftFile(filePath, entityToDraftYaml(entity, schema, { allowIncomplete: true, metadata: { mode: "create" } }));
-  return filePath;
-}
-
-export async function writeDeleteDraft(entity, options = {}) {
-  const filePath = resolveDraftPath(options);
-  await writeDraftFile(filePath, [
-    `# BURO delete draft. Generated for ${entity.id}.`,
-    "# Run `buro draft diff` to review, then `buro draft push` to delete.",
-    "",
-    ...metadataLines({ mode: "delete", base_id: entity.id, base_updated_at: entity.updated_at }),
-    "",
-  ].join("\n"));
-  return filePath;
-}
-
-export async function clearDraft(options = {}) {
-  const filePath = resolveDraftPath(options);
-  await rm(filePath, { force: true });
-  return filePath;
-}
-
-function parseMetadata(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("draft metadata is missing; pull a fresh draft");
-  const unknown = Object.keys(value).filter((key) => !["version", "mode", "base_id", "base_updated_at"].includes(key));
-  if (unknown.length) throw new Error(`draft metadata contains unknown fields: ${unknown.join(", ")}`);
-  if (value.version !== DRAFT_VERSION) throw new Error(`unsupported draft version: ${value.version || "unknown"}`);
-  if (!["create", "update", "delete"].includes(value.mode)) throw new Error(`unsupported draft mode: ${value.mode}`);
-  if (["update", "delete"].includes(value.mode) && (!value.base_id || !value.base_updated_at)) {
-    throw new Error(`${value.mode} draft is missing its base id or revision`);
-  }
-  return {
-    version: value.version,
-    mode: value.mode,
-    ...(value.base_id ? { base_id: String(value.base_id).trim() } : {}),
-    ...(value.base_updated_at ? { base_updated_at: String(value.base_updated_at).trim() } : {}),
-  };
-}
-
-export function parseDraft(text, schema) {
-  if (!String(text || "").split("\n").some(isMeaningfulLine)) return { mode: "empty" };
-  const parsed = yaml.load(String(text || "")) ?? {};
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("draft must be a plain YAML document");
-  const metadata = parseMetadata(parsed[META_KEY]);
-  delete parsed[META_KEY];
-  if (metadata.mode === "delete") {
-    if (Object.keys(parsed).length) throw new Error("delete draft must not contain entity fields");
-    return { mode: "delete", id: metadata.base_id, metadata };
-  }
-  const entity = validateDraftEntity(parsed, schema);
-  if (metadata.mode === "update" && entity.id !== metadata.base_id) {
-    throw new Error(`entity id is stable and cannot change from ${metadata.base_id} to ${entity.id}`);
-  }
-  return { mode: metadata.mode, entity, metadata };
-}
-
-export async function readDraft(options = {}, schema) {
-  const filePath = resolveDraftPath(options);
-  try {
-    const text = await readFile(filePath, "utf8");
-    return { filePath, text, ...parseDraft(text, schema) };
-  } catch (error) {
-    if (error?.code === "ENOENT") return { filePath, text: "", mode: "empty" };
-    throw error;
-  }
-}
-
-function linesOf(text) {
-  const normalized = String(text || "").replaceAll("\r\n", "\n").replace(/\n$/, "");
-  return normalized ? normalized.split("\n") : [];
-}
-
-export function lineDiff(fromText, toText, { fromLabel = "BURO current", toLabel = "draft" } = {}) {
-  const from = linesOf(fromText);
-  const to = linesOf(toText);
-  if (from.join("\n") === to.join("\n")) return "No draft changes.\n";
+export function lineDiff(fromText, toText) {
+  const from = String(fromText).trimEnd().split("\n");
+  const to = String(toText).trimEnd().split("\n");
+  if (fromText === toText) return "No changes.\n";
   let prefix = 0;
-  while (prefix < from.length && prefix < to.length && from[prefix] === to[prefix]) prefix += 1;
-  let fromEnd = from.length;
-  let toEnd = to.length;
-  while (fromEnd > prefix && toEnd > prefix && from[fromEnd - 1] === to[toEnd - 1]) {
-    fromEnd -= 1;
-    toEnd -= 1;
-  }
-  const removed = from.slice(prefix, fromEnd);
-  const added = to.slice(prefix, toEnd);
-  const output = [`--- ${fromLabel}`, `+++ ${toLabel}`];
-  for (let index = 0; index < prefix; index += 1) output.push(`  ${from[index]}`);
-  // A largely rewritten draft should still be reviewable without allocating a quadratic table.
+  while (prefix < from.length && prefix < to.length && from[prefix] === to[prefix]) prefix++;
+  let a = from.length, b = to.length;
+  while (a > prefix && b > prefix && from[a - 1] === to[b - 1]) { a--; b--; }
+  const removed = from.slice(prefix, a), added = to.slice(prefix, b);
+  const output = ["--- saved", "+++ draft", ...from.slice(0, prefix).map(line => `  ${line}`)];
   if (removed.length * added.length > 2_000_000) {
-    for (const line of removed) output.push(`- ${line}`);
-    for (const line of added) output.push(`+ ${line}`);
+    output.push(...removed.map(line => `- ${line}`), ...added.map(line => `+ ${line}`));
   } else {
-    const table = Array.from({ length: removed.length + 1 }, () => Array(added.length + 1).fill(0));
-    for (let i = removed.length - 1; i >= 0; i -= 1) {
-      for (let j = added.length - 1; j >= 0; j -= 1) {
-        table[i][j] = removed[i] === added[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
-      }
-    }
-    let i = 0;
-    let j = 0;
+    const table = Array.from({ length: removed.length + 1 }, () => new Uint32Array(added.length + 1));
+    for (let i = removed.length - 1; i >= 0; i--) for (let j = added.length - 1; j >= 0; j--) table[i][j] = removed[i] === added[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+    let i = 0, j = 0;
     while (i < removed.length || j < added.length) {
-      if (i < removed.length && j < added.length && removed[i] === added[j]) {
-        output.push(`  ${removed[i]}`); i += 1; j += 1;
-      } else if (j < added.length && (i === removed.length || table[i][j + 1] >= table[i + 1][j])) {
-        output.push(`+ ${added[j]}`); j += 1;
-      } else {
-        output.push(`- ${removed[i]}`); i += 1;
-      }
+      if (i < removed.length && j < added.length && removed[i] === added[j]) { output.push(`  ${removed[i++]}`); j++; }
+      else if (j < added.length && (i === removed.length || table[i][j + 1] >= table[i + 1][j])) output.push(`+ ${added[j++]}`);
+      else output.push(`- ${removed[i++]}`);
     }
   }
-  for (let index = fromEnd; index < from.length; index += 1) output.push(`  ${from[index]}`);
-  return `${output.join("\n")}\n`;
+  return `${[...output, ...from.slice(a).map(line => `  ${line}`)].join("\n")}\n`;
 }

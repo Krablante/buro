@@ -1,121 +1,96 @@
-# Development and packaging
+# Development and releases
 
 [English](development.md) · [Русский](development.ru.md) · [README](../README.md)
 
-BURO runs from source; there is no transpiler, bundle, or mandatory server.
-Use Node.js 24.14 or newer. `node:sqlite` is provided by Node; `js-yaml` is the
-only external runtime dependency.
+Use Node.js 24.14+. SQLite is provided by Node; js-yaml is the only runtime
+dependency. There is no build step or database daemon for local use.
 
 ```sh
-git clone https://github.com/Krablante/buro.git
-cd buro
 npm ci
+npm test
 node src/cli.js help
+npm pack --pack-destination /absolute/path/to/artifacts
 ```
 
-Keep experiments away from your normal registry. These environment settings
-select a disposable local instance and do not replace your normal config:
+For an isolated instance, select BURO_CONFIG and BURO_ROOT outside the checkout.
+Set backup_schedule:false in its config when you do not want a real OS timer.
+Do not point experimental code at a live database. Tests create temporary
+instances and exercise preservation, concurrency, references, failed backups,
+replacement, recovery, CLI drafts, and connection configuration.
 
-```sh
-export BURO_CONFIG=/tmp/buro-development/config.json
-export BURO_ROOT=/tmp/buro-development/data
-export BURO_MODE=local
-node src/cli.js init
-node src/cli.js draft new example project
-# Edit the printed draft; add one important rule.
-node src/cli.js draft diff
-node src/cli.js draft push
-node src/cli.js example
-```
+## Responsibilities
 
-Use another empty directory if that one already contains work. Windows users
-set the same variables with PowerShell's `$env:` syntax and choose Windows
-paths. Public CLI and connection files support Windows/macOS; the Politia
-deployment script is Linux-specific.
+CLI and HTTP call the same resolver. Preview and push both use applyChange;
+push repeats validation after acquiring SQLite's write lock. Schema code owns
+field definitions and normalization. DB code owns canonical rows, derived lookup
+indexes, transactions, and consistent snapshots. Registry code owns complete
+export/import and recovery. Migration is the narrow one-time conversion of v2's
+saved model; it does not keep old presets or command behavior alive.
 
-## What belongs where
+The active model is stored in SQLite metadata. Each type has its own revision.
+Records have independent revisions, and a registry generation changes after
+replacement/recovery. Draft metadata carries the original generation, record
+revision, and type revisions. Only relevant type revisions are checked for a
+record change, so an unrelated type edit does not invalidate it.
 
-`src/` contains the program, `types/` contains independent public definitions,
-and `presets/` contains the starter selection and Politia's full model.
-`presets/legacy/` holds exact historical definitions needed to recognize old
-databases and exports. They are compatibility data, not another active model.
-`integrations/` and `skills/` are files installed by `buro connect`; `scripts/`
-holds rollout and terminal-media tooling. Runtime databases, backups, drafts,
-packages, and audit evidence belong outside the checkout. Component boundaries
-are described in [architecture](architecture.md).
+Each record is one row: ID, name, kind, JSON values, revision. Deleted IDs go in
+retired_ids. Indexed normalized identities support exact names and aliases;
+device membership uses a derived locations index. These indexes are updated in
+the same transaction as canonical data. Exact ID reads do not scan the memory.
+List/search use bounded identity projections. Substring search may scan lookup
+keys; it does not inspect record bodies or claim semantic retrieval. Large
+offsets walk skipped index entries. Type format changes validate affected records
+one at a time before adoption; label/guide changes do not scan records. Ordinary record writes do not enumerate the registry unless incoming
+refs need checking. Whole-memory export/import is intentionally proportional
+to the full memory size and holds its complete manifest in memory.
 
-Fix behavior at its owner. Validation belongs in the schema or resolver, not
-in a separate implementation for each CLI/API route. Client display logic must
-not need a full registry export. Reuse the existing indexes before adding more
-tables or infrastructure.
+Successful mutation snapshots are made before canonical writes, while a write
+transaction prevents concurrent writers. SQLite serializes other processes;
+the resolver queues writes inside one server process. Read definitions are loaded
+from the saved model, so an invalid proposal never blocks the accepted model.
+The HTTP server reads current definitions rather than pinning them until restart.
+No second registry, worker DB copies, RAG store, or background model is involved.
 
-## Verify the behavior you changed
+## HTTP
 
-Exercise the real interface in the disposable instance. For a draft change,
-complete create, pull, diff, push, and delete; confirm that a failed push keeps
-the draft. For a model change, preview a compatible addition and an incompatible
-removal, confirm the latter leaves data untouched, and restore an export in a
-second instance. For a transport change, start the source API and use the CLI
-as a client against it:
+`buro serve` exposes the following JSON routes. These v3 routes replace the v2
+transport; update clients with the server.
 
-```sh
-node src/cli.js serve --port 18765
-# In a second terminal with the same isolated config/root:
-BURO_MODE=client BURO_API_URL=http://127.0.0.1:18765 node src/cli.js example
-```
+| Method and path | Response / purpose |
+| --- | --- |
+| GET /health | Storage status and record count |
+| GET /definitions | Accepted schema plus registry generation |
+| GET /current | Device record, member identities, limit, truncation flag |
+| GET /records | Identity page; kind, limit, offset, query parameters; full=1 includes record content for bulk consumers |
+| GET /records/:id-or-name | Full record including hidden packet fields |
+| GET /records/:id?exact=1 | Exact ID only |
+| GET /records/:id-or-name?packet=1 | Renderable record packet |
+| POST /drafts/preview | Validate a draft and return before/after |
+| POST /drafts/push | Validate again, snapshot, apply |
 
-Check JavaScript syntax in touched files, `bash -n scripts/deploy-live.sh` for
-rollout edits, and `npm audit --omit=dev` for dependency changes. For large-data
-work, record registry size and payload size, measure the same operation before
-and after on the same machine, and account for full-database backup I/O. Avoid
-using the operator's registry as a benchmark fixture.
+Requests may include current_context and current_limit. Draft POST bodies are
+`{metadata, value}` from the YAML draft's __buro and remaining fields; deletion
+uses value:null. Both endpoints require v3 revision/generation metadata. Conflicts
+return HTTP 409. JSON request bodies are limited to 1 MiB. There are no unchecked
+record PUT/DELETE routes. The API has no auth or TLS; see operation boundaries
+before exposing it.
 
-## Package and release
+## Packaging and release
 
-`npm pack` is the build. Choose a directory outside the checkout and inspect
-the package before installing it in an isolated prefix:
+One package contains CLI, server, three bundled definitions, the agent skill,
+manual prompt, plugin, hook runner, documentation, and optional operator scripts.
+Test sources, private facts, local databases, temporary files, and dependencies
+from the checkout are excluded by the package file list. The public repository
+and package never contain operator records.
 
-```sh
-npm pack --dry-run
-npm pack --pack-destination /tmp
-npm install -g /tmp/buro-<version>.tgz --prefix /tmp/buro-package-check
-/tmp/buro-package-check/bin/buro --version
-```
+Update the package version and lockfile together, run tests and a real packaged
+installation, then exercise new setup and an upgrade/recovery copy. Update both
+README languages and affected guides. Create the Git commit and tag only after
+the result is verified. Publish the tgz as the matching GitHub release asset.
+Local source edits do not update installed CLI or live services.
 
-Use the actual version from `package.json` in those paths. Verify the installed
-CLI with a fresh isolated registry, including `buro agent` and a connection to
-a temporary client profile. A source checkout passing checks does not prove
-that an installed package works.
-
-Public packages are GitHub release assets. A release should use one matching
-package version and lockfile, a tag identifying the reviewed source, and the
-verified tarball. Update installation URLs in both READMEs only when that asset
-exists. Verify its checksum after download. Publishing and deploying are
-separate operations; [operations](operations.md) owns the latter.
-
-## Terminal demos
-
-`npm run demos` renders the English and Russian GIFs from actual CLI use in
-isolated starter instances. `npm run demos:check` regenerates and compares them.
-Use the same ffmpeg/font environment for byte comparisons; renderer changes
-can change pixels without changing BURO behavior. Inspect the generated frames
-when command output or layout changes.
-
-Rendering requires ffmpeg's ass/palette filters and DejaVu Sans/Mono. Set
-`BURO_DEMO_FONTS_DIR` if the fonts live elsewhere. Media tooling is optional for
-ordinary source work, packaging, and runtime rollout.
-
-## Documentation languages
-
-English uses the unsuffixed filename; each additional locale uses a language
-suffix: `README.ru.md`, `docs/model.ru.md`, and so on. Use this rule for every
-category. Add `*.uk.md` or `*.de.md` without moving existing files or changing
-the program. Keep the language links at the top of each document and the README
-topic table in sync with the available translations.
-
-The README introduces the product and first use. Model, agents, drafts,
-interfaces, architecture, operations, and development each own one subject.
-Change the relevant translations together when behavior changes; equivalent
-meaning matters more than sentence-by-sentence translation. A new language
-must follow the same topic boundaries. Terminal media translations live in
-the generator's `translations` object.
+`npm run demos` generates the bilingual README GIFs from disposable real CLI
+flows using ffmpeg with libass and DejaVu Sans/Mono. `npm run demos:check` verifies
+their content. Set BURO_DEMO_FONTS_DIR if fonts are elsewhere. This media tool
+is independent of runtime installation. Inspect actual rendered frames after
+changing the CLI or demonstration, especially long lines and Russian text.

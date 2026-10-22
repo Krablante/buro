@@ -1,4 +1,0 @@
-id: starter
-version: 3
-default_kind: project
-type_files: [project, service, host, item]

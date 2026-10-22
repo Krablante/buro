@@ -1,143 +1,71 @@
-function kindSectionNames(schema, kind) {
-  return [...new Set(schema.kinds[kind].fields.map((field) => fieldDefinition(schema, kind, field).section || "facts"))];
-}
-
-function sectionGuideLines(schema, kind, indent = "  ") {
-  return kindSectionNames(schema, kind)
-    .filter((name) => schema.sections?.[name]?.guide)
-    .map((name) => `${indent}- ${name}: ${schema.sections[name].guide}`);
-}
-
 export function renderUsage() {
-  return [
-    "BURO keeps durable work context in one SQLite registry, using configurable record types.",
-    "",
-    "Usage:",
-    "  buro init [--dry-run]",
-    "  buro connect <opencodez|opencode|codex|claude> [--path <profile-directory>]",
-    "  buro connect file --path <instruction-file>",
-    "  buro agent",
-    "  buro types [<kind>|copy <kind> <file>]",
-    "  buro <id>",
-    "  buro get <id-or-name>  # also works for ids matching command names",
-    "  buro current [--brief]",
-    "  buro list [kind] [--limit <n>] [--offset <n>]",
-    "  buro search <text> [--limit <n>] [--offset <n>]",
-    "  buro schema",
-    "  buro schema <kind>",
-    "  buro draft pull <id>",
-    "  buro draft new <id> [kind]",
-    "  buro draft delete <id>",
-    "  buro draft diff",
-    "  buro draft push",
-    "  buro draft clear",
-    "  buro export <file>",
-    "  buro import <file> [--adopt]",
-    "  buro backup",
-    "  buro serve [--host <address>] [--port <port>]",
-    "  buro --version",
-    "  buro help",
-    "",
-    "Commands:",
-    "  init          Validate and apply definitions; --dry-run previews without writing.",
-    "  connect       Install instructions and a skill for your agent.",
-    "  agent         Print the universal agent contract; --full prints its workflow.",
-    "  types         Show record types or copy a built-in definition to a YAML file.",
-    "  search        Find identities by text without loading full records.",
-    "  <id>          Render one entity.",
-    "  current       Render current-context information for agent prompts.",
-    "  list [kind]   List a page of identities, optionally filtered by kind.",
-    "  schema        Inspect the normalized model; add a kind for its field guide.",
-    "  draft         Review and apply the one local YAML draft.",
-    "  export        Write a complete portable registry manifest.",
-    "  import        Validate and atomically replace from a manifest.",
-    "  backup        Take a consistent SQLite snapshot.",
-    "  serve         Share the local registry over HTTP (loopback by default).",
-    "  help          Show commands, even when the registry is unavailable.",
-    "",
-    "How to edit entities:",
-    "  Use draft for every write. Leave unknown facts empty instead of guessing.",
-    "  buro types shows the active types and default; buro types <kind> explains fields.",
-    "",
-  ].join("\n");
-}
+  return `BURO stores durable knowledge about specific work objects as typed records.
 
-export function renderSchemaSummary(schema) {
-  return `${[
-    `BURO schema: ${schema.id} v${schema.version}`,
-    `source: ${schema.source}`,
-    `default kind: ${schema.default_kind}`,
-    `context kind: ${schema.context?.kind || "none (optional)"}`,
-    "kinds:",
-    ...Object.keys(schema.kinds).map((kind) => `- ${kind}`),
-  ].join("\n")}\n`;
-}
+Read:
+  buro <id-or-name>                 Open one complete record; exact IDs win
+  buro get <id-or-name>             Also works for IDs matching command names
+  buro search <text>                Search IDs, names, aliases (not field contents)
+  buro list [kind]                  List identities; --limit 100 --offset 0
+  buro current                     Current device, its record, associated objects
 
-export function renderKindSchema(schema, kind) {
-  if (!Object.hasOwn(schema.kinds, kind)) throw new Error(`unsupported entity kind: ${kind}`);
-  const definition = schema.kinds[kind];
-  const sections = sectionGuideLines(schema, kind, "");
-  const lines = [
-    `BURO type: ${kind}`,
-    ...(definition.label ? [`purpose: ${definition.label}`] : []),
-    `preset: ${schema.id} v${schema.version}`,
-    ...(sections.length ? ["sections:", ...sections] : []),
-    "fields:",
-    "- id (string, required): stable entity id",
-    "- name (string, required): human-readable name",
-    "- kind (string, required): entity kind",
-  ];
-  for (const name of definition.fields) {
-    const field = fieldDefinition(schema, kind, name);
-    lines.push(`- ${name} (${field.type}${field.required ? ", required" : ""}): ${field.guide || "no guide"}`);
+Change records:
+  buro draft new <id> [kind]
+  buro draft pull <id-or-name>
+  buro draft delete <id-or-name>
+Change custom types:
+  buro types new <id> [--from <type>]
+  buro types edit <id>
+  buro types delete <id>
+Each command prints its own temporary YAML file. Keep its __buro metadata:
+  buro draft diff <file>            Validate and review this change
+  buro draft push <file>            Apply; remove this file only after success
+  buro draft clear <file>           Discard only this draft
+Stale drafts must be prepared again. Changing kind preserves the record ID;
+handle incompatible fields explicitly. Deleted record IDs cannot be reused.
+Copies are independent. --from prefers the bundled template when one exists,
+otherwise the active custom type. Bundled types cannot be edited or deleted.
+
+Setup and operation:
+  buro init [--dry-run]             Create memory or preview/upgrade saved types
+  buro connect <opencodez|opencode|codex|claude> [--path <profile>]
+                                   Install skill and session context connection
+  buro connect file --path <file>   Explicitly add instructions to that file
+  buro export <file>               Save all records, types, retired IDs
+  buro import <file> [--dry-run]    Replace the WHOLE memory; preview removals
+  buro backup [--scheduled]         Snapshot; scheduled keeps hourly/daily groups
+  buro restore <snapshot> [--dry-run]
+                                   Restore memory and device context settings
+  buro serve [--host <address>] [--port <port>]  Share local memory over HTTP
+  buro help                        Commands and active definitions
+  buro --version
+
+connect never edits System prompts. A ready-to-copy prompt is included in the
+package at integrations/system-prompt.md. Enable it yourself if wanted.
+OpenCode/OpenCodez need a restart; Codex needs hook review in /hooks.
+No api_url: local SQLite. api_url set: shared memory, no local fallback.
+The HTTP server has no authentication or TLS; restrict access to trusted clients.
+Before writes BURO requires a successful snapshot. Import/restore invalidates
+old drafts. Snapshot groups: 8 every 3h, 8 daily, 20 before mutations.
+Keys and tokens may be stored, but storage, exports, and backups are unencrypted.
+`;
+}
+export function renderDefinitions(schema) {
+  const lines = [`Default type: ${schema.default_kind}`];
+  function fields(definitions, indent) {
+    for (const [name, field] of Object.entries(definitions)) {
+      lines.push(`${indent}${name} (${field.type}, ${field.required ? "required" : "optional"}${field.target_kind ? ` → ${field.target_kind}` : ""}${field.packet === false ? ", hidden in packets" : ""})${field.guide ? `: ${field.guide}` : ""}`);
+      if (field.default !== undefined) lines.push(`${indent}  default: ${JSON.stringify(field.default)}`);
+      if (field.fields) fields(field.fields, `${indent}  `);
+    }
+  }
+  for (const [id, kind] of Object.entries(schema.kinds)) {
+    lines.push("", `${id}${kind.label ? ` — ${kind.label}` : ""} [${kind.origin === "builtin" ? "bundled" : "custom"}]`, "  id, name, kind (string, required): permanent ID, display name, record type");
+    fields(kind.definitions, "  ");
   }
   return `${lines.join("\n")}\n`;
 }
-
-export function renderCliError(error) {
-  return `BURO error: ${error instanceof Error ? error.message : String(error)}\n`;
+export function renderEntityListLine(entity, currentContext) { return `${entity.kind}\t${entity.id}\t${entity.name}${entity.id === currentContext ? " [CURRENT]" : ""}`; }
+export function renderCurrentContext(current, renderPacket) {
+  return [`## BURO Current Context`, "", "source: buro current", `device: ${current.context.id}`, "", current.packet ? renderPacket(current.packet).trimEnd() : "No host record for this device. This is normal.", "", "Associated objects:", ...current.members.map(entity => renderEntityListLine(entity)), ...(current.members.length ? [] : ["No associated records."]), ...(current.truncated ? [`Limited to ${current.limit} records; use search or list to narrow the lookup.`] : [])].join("\n") + "\n";
 }
-
-export function renderEntityListLine(entity, currentContext) {
-  const marker = entity.id === currentContext ? " [CURRENT]" : "";
-  return `${entity.kind}\t${entity.id}\t${entity.name}${marker}`;
-}
-
-export function renderCurrentContext({ currentContext, home, contextRoot, packetText, members, brief }) {
-  const lines = [
-    "## BURO Current Context",
-    "",
-    "source: buro current",
-    `home: ${home || "-"}`,
-    `context_root: ${contextRoot || "-"}`,
-    `current_context: ${currentContext || "-"}`,
-    "",
-    "[buro current context]",
-    packetText.trimEnd(),
-    ...(!brief ? ["", "[buro current entities]",
-      ...(members.length ? members.map((entity) => renderEntityListLine(entity, currentContext)) : ["No entities in the current context."]),
-      ...(members.length === 100 ? ["First 100 records; use buro search to narrow the lookup."] : [])] : []),
-  ];
-  return `${lines.join("\n")}\n`;
-}
-
-export function renderDraftEntityReady({ filePath, id, mode, target }) {
-  return `BURO draft ready\nmode: ${mode}\nid: ${id}\nfile: ${filePath}\ntarget: ${target}\n\nEdit the YAML file, then run \`buro draft diff\` and \`buro draft push\`.\n`;
-}
-
-export function renderDraftDeleteReady({ filePath, id, target }) {
-  return `BURO delete draft ready\nid: ${id}\nfile: ${filePath}\ntarget: ${target}\n\nRun \`buro draft diff\` to inspect, then \`buro draft push\` to delete.\n`;
-}
-
-export function renderDraftDiffResult({ id, mode, diffText }) {
-  return `BURO draft diff\nmode: ${mode}\nid: ${id}\n\n${diffText || "No changes."}\n`;
-}
-
-export function renderDraftPushResult({ action, id, filePath }) {
-  return `BURO draft pushed\naction: ${action}\nid: ${id}\ncleared: ${filePath}\n`;
-}
-
-export function renderDraftClearResult({ filePath }) {
-  return `BURO draft cleared\nfile: ${filePath}\n`;
-}
-import { fieldDefinition } from "./schema.js";
+export function renderCliError(error) { return `BURO error: ${error.message || error}\n`; }

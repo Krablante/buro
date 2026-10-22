@@ -23,10 +23,10 @@ if [ ! -d "$source_root/.git" ]; then
 fi
 cd "$source_root"
 version=$(node -p "require('./package.json').version")
-state_dir=$(node --input-type=module -e 'import {loadConfig} from "./src/config.js"; const c=loadConfig(); if(c.mode === "client") throw new Error("run deployment on the central host"); console.log(c.stateDir)')
+state_dir=$(node --input-type=module -e 'import {loadConfig} from "./src/config.js"; const c=loadConfig(); if(c.apiUrl && !["central","local"].includes(c.previousConfig.mode)) throw new Error("run deployment on the database device"); console.log(c.stateDir)')
 database_path=$(node --input-type=module -e 'import {loadConfig} from "./src/config.js"; console.log(loadConfig().databasePath)')
-server_host=$(node --input-type=module -e 'import {loadConfig} from "./src/config.js"; console.log(loadConfig().currentContext)')
-api_url=$(node --input-type=module -e 'import {loadConfig} from "./src/config.js"; const u=new URL(loadConfig().apiUrl); u.hostname="127.0.0.1"; console.log(u.href.replace(/\/$/, ""))')
+api_url=${BURO_DEPLOY_API_URL:-http://127.0.0.1:8765}
+config_path=$(node --input-type=module -e 'import {loadConfig} from "./src/config.js"; console.log(loadConfig().configPath)')
 pack_dir=${PACK_DIR:-$state_dir/deployments/$version-$(date -u +%Y%m%dT%H%M%SZ)}
 tarball="$pack_dir/buro-$version.tgz"
 worker_prefix=${BURO_WORKER_PREFIX:-/usr}
@@ -35,6 +35,7 @@ node_bin_dir=$(dirname "$(command -v node)")
 sudo_node_path="$node_bin_dir:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 previous_package=""
 previous_snapshot=""
+previous_config=""
 api_stopped=0
 central_pending=0
 unavailable_workers=()
@@ -62,7 +63,7 @@ finish() {
     if systemctl --user stop buro-api.service; then
       api_stopped=1
       if sudo -n env "PATH=$sudo_node_path" npm install -g "$previous_package" --prefix /usr/local \
-        && cp "$previous_snapshot" "$database_path"; then
+        && cp "$previous_snapshot" "$database_path" && cp "$previous_config" "$config_path"; then
         printf 'Previous installation restored.\n' >&2
       else
         printf 'Recovery failed; API left stopped. Package: %s; snapshot: %s\n' "$previous_package" "$previous_snapshot" >&2
@@ -91,13 +92,23 @@ JS
 }
 trap finish EXIT
 
-workers=${BURO_WORKER_HOSTS:-$(buro list host --limit 1000)}
-if [ -z "${BURO_WORKER_HOSTS:-}" ]; then
-  worker_ids=()
-  while read -r kind id _; do
-    if [ "$kind" = host ] && [ "$id" != "$server_host" ]; then worker_ids+=("$id"); fi
-  done <<< "$workers"
-  workers="${worker_ids[*]}"
+workers=""
+if [ "$sync_workers" -eq 1 ]; then
+  workers=${BURO_WORKER_HOSTS:-$(node --input-type=module <<'JS'
+import {loadConfig} from './src/config.js';
+import {openDatabase} from './src/db.js';
+const config = loadConfig();
+const targets = new Set();
+const db = openDatabase(config.databasePath, {readOnly:true});
+for (const row of db.prepare("SELECT id,data FROM entities WHERE kind='host' ORDER BY id").iterate()) {
+  if (row.id === config.currentContext) continue;
+  const host = JSON.parse(row.data);
+  if (host.enabled !== false) targets.add(host.ssh_target || row.id);
+}
+db.close();
+console.log([...targets].join(' '));
+JS
+)}
 fi
 for host in $workers; do
   if [[ ! "$host" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
@@ -105,13 +116,15 @@ for host in $workers; do
   fi
 done
 
-run env BURO_MODE=local node src/cli.js init --dry-run
+run node src/cli.js init --dry-run
 run mkdir -p "$pack_dir"
 run npm pack --pack-destination "$pack_dir"
 if [ "$dry_run" -eq 0 ]; then
   rollback_dir=$(mktemp -d "$pack_dir/rollback.XXXXXX")
   previous_name=$(npm pack /usr/local/lib/node_modules/buro --pack-destination "$rollback_dir" --quiet)
   previous_package="$rollback_dir/$previous_name"
+  previous_config="$rollback_dir/config.json"
+  cp "$config_path" "$previous_config"
   systemctl --user stop buro-api.service
   api_stopped=1
   snapshot_output=$(buro backup)
@@ -122,15 +135,15 @@ if [ "$dry_run" -eq 0 ]; then
   central_pending=1
 fi
 run sudo -n env "PATH=$sudo_node_path" npm install -g "$tarball" --prefix /usr/local
-run env BURO_MODE=local buro init
+run buro init
 run systemctl --user restart buro-api.service
 if [ "$dry_run" -eq 0 ]; then api_stopped=0; fi
 run systemctl --user is-active buro-api.service
 # Keep the rollback boundary open through actual CLI and HTTP verification.
 run buro --version
 run_check buro buro
-run_check buro current --brief
-run_check env BURO_MODE=client "BURO_API_URL=$api_url" buro buro
+run_check buro current
+run_check env "BURO_API_URL=$api_url" buro buro
 if [ "$dry_run" -eq 0 ]; then
   test "$(buro --version)" = "$version"
   node --input-type=module -e 'const r=await fetch(process.argv[1]+"/health", {signal:AbortSignal.timeout(3000)}); const h=await r.json(); if(!r.ok || !h.ok) throw new Error(JSON.stringify(h)); console.log("Central API healthy; records:", h.entity_count)' "$api_url"
@@ -148,7 +161,7 @@ if [ "$sync_workers" -eq 1 ]; then
     if ! run ssh "$host" 'test -f "$HOME/.config/buro/config.json"' \
       || ! run scp "$tarball" "$host:/tmp/buro-$version.tgz" \
       || ! run ssh "$host" "sudo -n npm install -g /tmp/buro-$version.tgz --prefix $worker_prefix" \
-      || ! run_check ssh "$host" "test \"\$(buro --version)\" = '$version' && buro buro && buro current --brief && buro connect opencodez" \
+      || ! run_check ssh "$host" "test \"\$(buro --version)\" = '$version' && buro init && buro buro && buro current && buro connect opencodez" \
       || ! run ssh "$host" rm -f "/tmp/buro-$version.tgz"; then
       failed_workers+=("$host")
       continue

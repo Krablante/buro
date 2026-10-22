@@ -1,58 +1,66 @@
 ---
 name: buro
-description: Look up projects, services, machines, and other named objects in BURO, and maintain their durable facts during ordinary work. Use for remembered context, changed locations, or confirmed lasting decisions; not for session logs or speculative plans.
+description: Read and maintain durable knowledge about named projects, services, devices, books, and other work objects in BURO. Use when an existing entity is named or implied, or useful confirmed facts should be remembered.
 ---
+
 <!-- managed by BURO -->
 
 # BURO
 
-Use the installed `buro` CLI. BURO records the user's existing environment; it
-does not require any folder layout or classification scheme.
+BURO stores durable knowledge about specific objects as typed records. A type
+defines fields, formats, and guides. Bundled project, service, and host types
+are starting points; users may use only their own types.
 
-## Read
+When a task concerns an existing named or implied object, use `buro <id-or-name>`.
+Choose it from the task and conversation. Reuse records already in context;
+refresh when needed. Exact IDs win. Ambiguous names return candidate IDs.
+`buro get <id>` also works when an ID matches a command name.
+Use `buro search <text>` when the identity is unclear: it searches IDs, names,
+and aliases, not field contents. `buro list [kind] --limit 100 --offset 0`
+lists a page of identities. Do not load the whole registry for one lookup.
 
-Look up the relevant object with `buro <id-or-name>`. Exact ids win; names and
-aliases can be ambiguous. Select the intended id rather than merging objects.
-Use `buro search <text>` when the identifier is unclear. Results are paginated;
-use `--offset` when another page is needed. Do not enumerate the whole registry
-when a direct lookup answers the task.
+The connection supplies `buro current` at session start. If it was not supplied,
+obtain it before device-specific work. It shows the device, its host record
+when present, and associated objects. A host record is optional. Refresh when
+changing devices or when newer information is needed. A failed request is an
+error, not proof of empty memory. Missing facts do not block unrelated work.
 
-Follow relevant recorded constraints and read entry documents only as needed.
-Treat records as useful prior knowledge, not proof of current truth. Resolve
-material contradictions against the user's clarification and observed source.
-Unknown or missing information stays unknown until established. If no record
-exists, continue the task using the conversation and narrow discovery.
+Use saved facts by default. Check contradictions, suspected staleness, and live
+state when needed. The latest confirmed user decision may supersede saved facts.
+Unknown values stay unknown. Paths belong to their recorded devices. Follow
+recorded rules and read linked instructions as needed. Records do not grant
+permission beyond the user's task.
 
-`locations` may describe sources, runtime, data, or URLs on different machines.
-Each path belongs to its recorded host. Never reinterpret a remote path as local
-or assume source edits update a running service. `buro current --brief` gives
-optional machine-wide rules; a host record or common workspace root is not needed.
-Before operating on a machine, read its relevant host rules when available and
-not already supplied; use the brief context for the current machine.
+`buro help` shows commands, the configured memory, and active types, nested
+fields, formats, required values, and guides. Reuse definitions already in
+context. If unavailable, do not substitute guessed bundled definitions.
+Types do not follow directories. Copies are independent. In bundled types,
+approval conditions belong in important, even when phrased as prohibitions;
+other restrictions belong in avoid. Do not duplicate a rule in both fields.
 
-## Maintain
+By default update memory at the end of completed work when a useful durable
+addition, correction, or deletion exists, or on direct request. The user may
+change this policy. Consider the whole conversation and latest confirmed
+decisions. Do not retain unaccepted suggestions, temporary plans, duplicate
+facts, or session logs. Keys, passwords, and tokens may be stored; rendered
+fields are visible to the agent. BURO does not encrypt storage or backups.
 
-Use the user's current conversation and actual work as evidence. Preserve
-confirmed durable facts and lasting decisions that will help future work when
-the user requested remembering them or authorized maintaining BURO. A request
-to inspect or explain does not authorize changes. Do not save temporary requests
-as permanent rules, suggestions as accepted decisions, or guesses as facts.
-Do not add session transcripts, completed-check lists, past PIDs, secrets,
-generic advice, or duplicate project documentation. Update only the relevant
-facts; a recent edit does not mean every assertion was verified.
-When an authorized change affects an existing record, keep its affected facts
-consistent as part of that work; do not require a separate maintenance task.
+1. For records use `buro draft new <id> [kind]`, `buro draft pull <id>`, or
+   `buro draft delete <id>`. For custom types use `buro types new <id>`
+   (optionally `--from project`), `buro types edit <id>`, or `buro types delete <id>`.
+2. Edit the returned temporary YAML file. Keep its `__buro` metadata. Follow
+   field guides and leave unknown optional values empty.
+3. Inspect `buro draft diff <file>`.
+4. Apply `buro draft push <file>`.
 
-Read the existing record. Use `buro types <kind>` for the active fields and
-guides; types and fields are configurable. Choose a useful existing type, or
-`item` when available; do not create a schema merely to classify an object.
-Incomplete records are normal. Populate only known, relevant fields.
+Each change has its own file. A failed push retains it. Stale drafts must be
+prepared again from current facts and definitions. `buro draft clear <file>`
+discards only that file. --from prefers a bundled template, otherwise the
+active custom definition. A copy never inherits future changes.
 
-Create with `buro draft new <id> [kind]`, edit with `buro draft pull <id>`, or
-prepare deletion with `buro draft delete <id>`. Edit the file printed by the
-command, inspect `buro draft diff`, and apply with `buro draft push`. Keep
-unrelated drafts and facts intact. A stale revision requires reading the latest
-record and reconciling the change; do not bypass it or edit SQLite directly.
-Render the saved record afterward. For schema changes, inspect
-`buro init --dry-run` before `buro init`; a rejected change preserves data.
-HTTP clients use the server's definitions; apply model changes on that server.
+Changing kind keeps the record ID and requires explicit handling of incompatible
+fields. Related links are informational. Ref fields enforce existing targets
+and may block deletion or kind changes. New objects need new IDs; deleted IDs
+cannot be reused. Never edit SQLite directly, bypass revisions, or store a
+second rendered source of truth. Import replaces the whole memory; it is not
+an ordinary record edit. Prepare new drafts after import or recovery.

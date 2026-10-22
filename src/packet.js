@@ -1,11 +1,6 @@
 import yaml from "js-yaml";
 import { fieldDefinition } from "./schema.js";
 
-function relation(target, current) {
-  if (!current) return "current context unknown";
-  return target.id === current.id ? "current" : `current: ${current.id}`;
-}
-
 function visibleFields(entity, schema) {
   return schema.kinds[entity.kind].fields.filter((name) => (
     entity[name] !== undefined && fieldDefinition(schema, entity.kind, name).packet !== false
@@ -13,8 +8,7 @@ function visibleFields(entity, schema) {
   ));
 }
 
-export function entityPacket(entity, schema, currentContext = null, contextEntity = null) {
-  const context = entity.kind === schema.context?.kind ? entity : contextEntity;
+export function entityPacket(entity, schema) {
   const sections = [];
   const bySection = new Map();
   for (const name of visibleFields(entity, schema)) {
@@ -32,12 +26,6 @@ export function entityPacket(entity, schema, currentContext = null, contextEntit
     id: entity.id,
     name: entity.name,
     kind: entity.kind,
-    context: context ? {
-      id: context.id,
-      name: context.name,
-      kind: context.kind,
-      relation: relation(context, currentContext),
-    } : null,
     sections,
   };
 }
@@ -54,7 +42,6 @@ export function renderPacket(packet) {
     `BURO Entity: ${packet.kind}:${packet.id}`,
     `Name: ${packet.name}`,
   ];
-  if (packet.context) lines.push(`Context: ${packet.context.id} (${packet.context.relation})`);
   for (const section of packet.sections) {
     lines.push("", `${section.name.toUpperCase()}:`);
     if (section.guide) lines.push(`  # ${section.guide}`);

@@ -1,89 +1,98 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
+import { assertSchemaBinding, assertSupportedDatabase, backupDatabase, listEntities, openDatabase, readStoredModel, replaceEntities } from "./db.js";
+import { serializeMutation, validateEntitySet } from "./resolver.js";
+import { loadSchema, schemaFromTypes, schemaTypes, text } from "./schema.js";
+import { resetGeneration, saveConfig, upgradeModel } from "./migration.js";
 
-import { replaceRegistryRecords, validateEntitySet } from "./resolver.js";
-import { loadSchema, normalizeSchema } from "./schema.js";
-import { migrateEntities } from "./migration.js";
-import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
-const FORMAT = "buro-registry";
-const FORMAT_VERSION = 2;
-
-function plainObject(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+function retiredIds(db) {
+  return db.prepare("SELECT 1 FROM sqlite_master WHERE name='retired_ids'").get() ? db.prepare("SELECT id FROM retired_ids ORDER BY id").all().map(row => row.id) : [];
 }
-
-function manifestFor(entities, schema) {
-  const { source: _source, hash: _hash, core_fields: _coreFields, ...model } = schema;
-  return {
-    format: FORMAT,
-    version: FORMAT_VERSION,
-    model,
-    preset: {
-      id: schema.id,
-      version: schema.version,
-      hash: schema.hash,
-    },
-    entities: [...entities].sort((left, right) => (
-      left.kind.localeCompare(right.kind) || left.id.localeCompare(right.id)
-    )),
-  };
-}
-
-export async function exportRegistry(filePath, entities, schema) {
-  const target = path.resolve(filePath);
-  await mkdir(path.dirname(target), { recursive: true });
-  const text = yaml.dump(manifestFor(entities, schema), {
-    noRefs: true,
-    lineWidth: -1,
-    sortKeys: false,
-  });
+export async function exportRegistry(file, config) {
+  const db = openDatabase(config.databasePath, { readOnly: true });
   try {
-    await writeFile(target, text, { encoding: "utf8", mode: 0o600, flag: "wx" });
-  } catch (error) {
-    if (error?.code === "EEXIST") throw new Error(`registry export already exists: ${target}`);
-    throw error;
-  }
-  return { filePath: target, count: entities.length };
+    db.exec("BEGIN");
+    const schema = loadSchema({ ...config, database: db });
+    const entities = await listEntities(db, schema);
+    const manifest = { format: "buro-registry", version: 3, default_kind: schema.default_kind, types: schemaTypes(schema), retired_ids: retiredIds(db), entities };
+    await mkdir(path.dirname(path.resolve(file)), { recursive: true });
+    await writeFile(file, yaml.dump(manifest, { noRefs: true, lineWidth: -1 }), { flag: "wx", mode: 0o600 });
+    return { count: entities.length, filePath: path.resolve(file) };
+  } finally { db.close(); }
 }
 
-export async function readRegistryManifest(filePath, schema, options = {}) {
-  const source = path.resolve(filePath);
-  const manifest = yaml.load(await readFile(source, "utf8"));
-  if (!plainObject(manifest)) throw new Error("registry export must be a YAML object");
-  const unknown = Object.keys(manifest).filter((key) => !["format", "version", "model", "preset", "exported_at", "entities"].includes(key));
-  if (unknown.length) throw new Error(`registry export contains unknown fields: ${unknown.join(", ")}`);
-  if (manifest.format !== FORMAT || ![1, FORMAT_VERSION].includes(manifest.version)) {
-    throw new Error(`unsupported registry export format: ${manifest.format || "unknown"} v${manifest.version || "unknown"}`);
-  }
-  if (!plainObject(manifest.preset)) throw new Error("registry export preset metadata is required");
-  const unknownPreset = Object.keys(manifest.preset).filter((key) => !["id", "version", "hash"].includes(key));
-  if (unknownPreset.length) throw new Error(`registry export preset contains unknown fields: ${unknownPreset.join(", ")}`);
-  if (typeof manifest.preset.id !== "string" || !Number.isInteger(manifest.preset.version) || typeof manifest.preset.hash !== "string") {
-    throw new Error("registry export preset metadata is invalid");
-  }
-  const presetMatches = manifest.preset.id === schema.id
-    && manifest.preset.version === schema.version
-    && manifest.preset.hash === schema.hash;
-  if (!presetMatches && !options.adopt) {
-    throw new Error(`registry export uses ${manifest.preset.id} v${manifest.preset.version}; active preset is ${schema.id} v${schema.version}`);
-  }
-  if (!Array.isArray(manifest.entities)) throw new Error("registry export entities must be a list");
-  let previous = manifest.model ? normalizeSchema(manifest.model, "registry export") : null;
-  if (!previous && ["starter", "politia"].includes(manifest.preset.id)) {
-    const legacyFile = new URL(`../presets/legacy/${manifest.preset.id}-v${manifest.preset.version}.yaml`, import.meta.url);
-    if (existsSync(legacyFile)) previous = loadSchema(fileURLToPath(legacyFile));
-  }
-  if (previous && previous.hash !== manifest.preset.hash) throw new Error("export model does not match its declared hash");
-  const result = presetMatches ? { entities: validateEntitySet(manifest.entities, schema) }
-    : migrateEntities(manifest.entities, { preset: manifest.preset.id }, previous, schema);
-  return { source, manifest, presetMatches, ...result };
+function validateManifest(value) {
+  if (!value || value.format !== "buro-registry" || value.version !== 3 || !Array.isArray(value.types) || !Array.isArray(value.entities) || !Array.isArray(value.retired_ids)) throw new Error("expected a complete BURO v3 export");
+  const unknown = Object.keys(value).filter(key => !["format", "version", "default_kind", "types", "retired_ids", "entities"].includes(key));
+  if (unknown.length) throw new Error(`unknown export fields: ${unknown.join(", ")}`);
+  const schema = schemaFromTypes(value.types, value.default_kind);
+  const entities = validateEntitySet(value.entities, schema);
+  const retired = [...new Set(value.retired_ids.map(id => text(id, "retired ID")))];
+  const active = new Set(entities.map(entity => entity.id));
+  if (retired.some(id => active.has(id))) throw new Error("an ID cannot be both active and retired");
+  return { schema, entities, retired };
 }
 
-export async function importRegistry(filePath, options) {
-  const { source, manifest, presetMatches, entities } = await readRegistryManifest(filePath, options.schema, options);
-  if (options.draftPath && existsSync(options.draftPath)) throw new Error(`active draft at ${options.draftPath}; finish or preserve it before replacing the registry`);
-  return { source, sourcePreset: manifest.preset, adopted: !presetMatches, ...(await replaceRegistryRecords(entities, options)) };
+async function replaceMemory(input, config, dryRun) {
+  return serializeMutation(async () => {
+    const db = openDatabase(config.databasePath, { mustExist: true });
+    try {
+      db.exec(dryRun ? "BEGIN" : "BEGIN IMMEDIATE");
+      let settingsChanged = false;
+      try {
+        const schema = loadSchema({ ...config, database: db });
+        assertSchemaBinding(db, schema);
+        const previousCount = db.prepare("SELECT count(*) AS n FROM entities").get().n;
+        const nextIds = new Set(input.entities.map(entity => entity.id));
+        let removedCount = 0; const removed = [];
+        for (const row of db.prepare("SELECT id FROM entities ORDER BY id").iterate()) if (!nextIds.has(row.id)) { removedCount++; if (removed.length < 100) removed.push(row.id); }
+        const preview = { previousCount, count: input.entities.length, removedCount, removed, types: Object.keys(input.schema.kinds) };
+        if (dryRun) { db.exec("ROLLBACK"); return preview; }
+        const backupPath = await backupDatabase(config.databasePath, config);
+        await replaceEntities(input.entities, db, input.schema);
+        db.exec("DELETE FROM retired_ids");
+        const insert = db.prepare("INSERT OR IGNORE INTO retired_ids(id) VALUES(?)");
+        for (const id of input.retired) insert.run(id);
+        resetGeneration(db);
+        if (input.settings) {
+          await saveConfig(config, { ...config.previousConfig, ...input.settings });
+          settingsChanged = true;
+        }
+        db.exec("COMMIT");
+        return { ...preview, backupPath };
+      } catch (error) {
+        try { db.exec("ROLLBACK"); } catch {}
+        if (settingsChanged) await saveConfig(config, config.previousConfig);
+        throw error;
+      }
+    } finally { db.close(); }
+  });
+}
+export async function importRegistry(file, config, { dryRun = false } = {}) {
+  return replaceMemory(validateManifest(yaml.load(await readFile(file, "utf8"))), config, dryRun);
+}
+
+export async function restoreRegistry(file, config, { dryRun = false } = {}) {
+  if (path.resolve(file) === config.databasePath) throw new Error("choose a backup, not the active database");
+  const snapshot = openDatabase(path.resolve(file), { readOnly: true });
+  let input, backup;
+  try {
+    if (snapshot.prepare("PRAGMA integrity_check").get().integrity_check !== "ok") throw new Error("backup failed SQLite integrity check");
+    assertSupportedDatabase(snapshot);
+    const stored = readStoredModel(snapshot);
+    if (!stored) throw new Error("snapshot has no definitions");
+    const schema = upgradeModel(stored);
+    const entities = snapshot.prepare("SELECT * FROM entities").all().map(row => ({ id: row.id, name: row.name, kind: row.kind, ...JSON.parse(row.data), updated_at: row.updated_at }));
+    input = { schema, entities: validateEntitySet(entities, schema), retired: retiredIds(snapshot) };
+    const row = snapshot.prepare("SELECT value FROM buro_meta WHERE key='backup'").get();
+    backup = row ? JSON.parse(row.value) : null;
+  } finally { snapshot.close(); }
+  if (backup?.settings) {
+    const { current_context, current_limit } = backup.settings;
+    if (typeof current_context !== "string" || !Number.isInteger(current_limit) || current_limit < 1 || current_limit > 10000) throw new Error("snapshot device settings are invalid");
+    input.settings = { current_context, current_limit };
+  }
+  const result = await replaceMemory(input, config, dryRun);
+  return { ...result, backupVersion: backup?.version || "unknown", restoredSettings: backup?.settings || {} };
 }

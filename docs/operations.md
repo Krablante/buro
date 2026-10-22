@@ -1,128 +1,141 @@
-# Configuration and operation
+# Operation and recovery
 
 [English](operations.md) · [Русский](operations.ru.md) · [README](../README.md)
 
-Local use requires no server or editable configuration. `buro init` creates
-SQLite and, when absent, a small config file with the default type selection.
-Mutable data lives outside the installed package:
+`buro init` creates local memory and installs the native backup schedule.
+Configuration and state stay outside the package:
 
 ```text
 ~/.config/buro/config.json
-~/.local/share/buro/
-  BURO_DRAFT.yaml                 # while editing
-  state/buro/buro.sqlite3
-  state/buro/backups/sqlite/
+~/.local/share/buro/state/buro/buro.sqlite3
+~/.local/share/buro/state/buro/backups/sqlite/{mutation,hourly,daily}/
 ```
 
-Two configuration concerns are independent: program settings and YAML type
-definitions. See [model](model.md) for selecting or changing types. Local mode
-opens SQLite; central mode adds the optional HTTP service; client mode uses the
-same registry through HTTP and keeps no database copy. A client can use:
+Drafts are private files in OS temporary directories, each with its own path.
+They are not stored next to source. Temporary-directory cleanup may remove old
+drafts; preserve intended edits elsewhere if they must survive that cleanup.
+
+## Configuration
+
+No editable config is required for the local default. A shared-memory client uses:
 
 ```json
 {
   "api_url": "http://registry:8765",
-  "current_context": "worker-a"
+  "current_context": "laptop",
+  "current_limit": 100
 }
 ```
 
-An API URL implies client mode unless mode is explicit. Machine identity
-defaults to the short hostname. Use a unique `current_context` if hostnames
-collide. Creating a host record is optional; it supplies machine-wide rules and
-can define an existing workspace root.
+The presence of api_url selects HTTP. Its absence selects SQLite. Clients never
+initialize or use a fallback database. Current context defaults to the short
+system hostname. It need not correspond to a host record. A host record can
+provide rules; current also lists objects located on that device. If the bounded
+list has more records, the output explicitly reports truncation.
 
-`BURO_CONFIG` selects a config file; environment settings override JSON values.
-`type_files` selects built-in names or YAML paths, and `default_kind` chooses
-the default type. Those two settings are configured through JSON. Legacy
-`preset` / `schema_path` full models remain available; an explicit type_files
-selection takes precedence over them.
+`BURO_CONFIG` selects the config file. Environment values override JSON:
 
-| JSON key | Environment |
+| JSON setting | Environment | Default |
+| --- | --- | --- |
+| api_url | BURO_API_URL | empty: direct SQLite |
+| current_context | BURO_CURRENT_CONTEXT | short hostname |
+| current_limit | BURO_CURRENT_LIMIT | 100, maximum 10000 |
+| api_timeout_ms | BURO_API_TIMEOUT_MS | 5000 |
+| instance_root | BURO_ROOT | ~/.local/share/buro |
+| state_dir | BURO_STATE_DIR | instance_root/state/buro |
+| database_path | BURO_DATABASE_PATH | state_dir/buro.sqlite3 |
+| backup_dir | BURO_BACKUP_DIR | state_dir/backups/sqlite |
+| backup_retention | BURO_BACKUP_RETENTION | 20 mutation snapshots |
+| backup_schedule | — | true; false disables installing a schedule |
+
+The active model and default type live in SQLite. Preset paths, type_files,
+schema_path, mode, central_host, and the single draft_path are obsolete. Init
+converts the saved v2 model and removes those config selections after success.
+An old central config's api_url described its own server; init removes that
+endpoint. An old client's api_url remains its shared-memory target.
+If a v2 client relied only on mode/central_host, set its existing server's api_url
+before upgrading. Init refuses to create a local memory for that old client.
+
+## Backups
+
+Snapshots use SQLite's consistent backup API and private permissions. A new file
+receives its final name only after completion. A failure cancels the write.
+Retention removes older snapshots only after a successful new snapshot in the
+same group. Interrupted .partial files are not recovery snapshots.
+
+| Group | Retained |
 | --- | --- |
-| mode | BURO_MODE |
-| current_context | BURO_CURRENT_CONTEXT |
-| api_url | BURO_API_URL |
-| central_host | BURO_CENTRAL_HOST |
-| instance_root | BURO_ROOT |
-| state_dir | BURO_STATE_DIR |
-| database_path | BURO_DATABASE_PATH |
-| backup_dir | BURO_BACKUP_DIR |
-| backup_retention | BURO_BACKUP_RETENTION |
-| draft_path | BURO_DRAFT_PATH |
-| preset | BURO_PRESET |
-| schema_path | BURO_SCHEMA_PATH |
+| hourly | Latest 8 snapshots, at least 3 hours apart |
+| daily | Latest 8 snapshots, at least 24 hours apart |
+| mutation | Latest 20 snapshots before record, type, import, or restore changes; manual snapshots use this group too |
 
-`buro backup` uses SQLite's online backup API. Successful mutations and schema
-adoption take pre-write snapshots; previews do not. The newest 20 are retained
-by default. An unchanged `init` creates no snapshot. New databases and snapshots
-are created with mode 0600; existing permissions are preserved. Backups copy the database, so high-frequency edits to a large
-registry cost I/O and disk space. Keep events and transcripts elsewhere. Check
-recovery in a separate instance using an export/import or a snapshot.
+`buro backup` takes a manual snapshot. `buro backup --scheduled` creates currently
+due hourly/daily snapshots without replaying missed intervals. Repeated init
+updates one schedule per database, not duplicate tasks. Only the database device
+installs it. The CLI is short-lived; no backup daemon stays running.
 
-To upgrade, install the new package, review `buro init --dry-run`, apply with
-`buro init`, and reconnect your agent. Stop a central API while adopting a
-changed model, then restart it and update clients. Known v1 models migrate
-without dropping records. Keep the previous package and snapshot until the
-new API and clients have been verified. Do not restore a live database while
-its service or clients are writing.
+Linux uses user systemd timers with Persistent=true. macOS uses a LaunchAgent
+with RunAtLoad and a three-hour interval. Windows uses a user scheduled task
+with StartWhenAvailable, including the selected config and storage paths. If the native
+scheduler fails or is unavailable, init says the schedule was NOT enabled and
+prints the command to schedule manually. Linux integration is exercised on live
+systems; macOS and Windows installers require verification on those platforms.
+The device must be on to make copies. Linux persistent timers catch up once on
+return; macOS RunAtLoad does so at login; Windows catches up when available.
 
-`init`, `backup`, `export`, `import`, and `serve` require direct storage.
-The HTTP server has no auth or TLS; bind to loopback unless a trusted private
-network or access-controlled proxy supplies that boundary. Worker clients
-must not copy, synchronize, or open the central SQLite file.
+Snapshots include records, definitions, retired IDs, the BURO version, and the
+database device's context settings, independently of the writing client's identity.
+Keep copies on another device for protection against disk loss.
+Frequent writes copy the database and therefore have real I/O and storage cost.
+Use BURO for durable facts rather than event streams.
 
-## Politia deployment
-
-`npm run deploy:politia` (alias `deploy:live`) is the Linux rollout for Politia's
-existing central installation and clients. It previews adoption, packs once,
-stops the API, saves the old package and a snapshot, and upgrades the central
-installation. Rollback remains available until installed CLI and HTTP checks
-succeed. Workers receive the same package. Existing configuration files stay
-in place, including custom endpoints and draft paths. SSH, sudo, Node, and the
-user unit `buro-api.service` must already work. This workflow uses the central
-configuration and does not require ffmpeg. Source edits alone are not installed
-behavior; review the script before using it outside Politia.
+## Export, replacement, and recovery
 
 ```sh
-npm run deploy:politia -- --dry-run
-npm run deploy:politia
+buro export memory.yaml
+buro import memory.yaml --dry-run
+buro import memory.yaml
+buro restore /absolute/path/to/snapshot.sqlite3 --dry-run
+buro restore /absolute/path/to/snapshot.sqlite3
 ```
 
-Offline workers are reported as pending. A reachable worker failure fails the
-deployment. Each run retains its package, rollback materials, and `pending.json`
-under `<state_dir>/deployments/<version>-<timestamp>/`. The record contains the
-package checksum and worker results. Keep it until the rollout is complete;
-install the retained package on an offline worker when it returns. The script
-refreshes the OpenCodez connection; changed plugin code needs a client restart.
+Import replaces the entire memory: definitions, records, and retired IDs. Preview
+shows old/new counts and disappearing IDs (first 100, with the full count).
+The whole input is validated before replacement. Even an empty but valid export
+can clear the registry. Before import or recovery, a snapshot is mandatory.
+Replacements are transactional and invalidate every old draft.
 
-`BURO_SOURCE_ROOT` selects the checkout; `BURO_ROOT` still selects instance data.
-`PACK_DIR` overrides artifact storage. `BURO_WORKER_HOSTS` limits the rollout to
-space-separated SSH names; otherwise hosts come from the registry.
-`BURO_WORKER_PREFIX` defaults to `/usr`; the central prefix is `/usr/local`.
-`--skip-workers` updates only the central installation. Terminal media belongs
-to [development](development.md), independently of runtime deployment.
+For recovery, stop the API and other writers, preview the selected snapshot,
+restore it, check `buro list` and a known record, then restart the API. Restore
+also restores current_context and current_limit. The target device's existing
+storage paths and transport configuration stay in place, so a recovery copy
+does not accidentally reopen the original database. When config writing fails,
+database replacement is rolled back. Use `buro init` in an isolated data root
+first when validating recovery on another device. V2 snapshots containing a
+saved model can be restored through the same one-time definition conversion.
 
-## Recovery and common errors
+A client timeout does not prove a write failed: the server may complete after
+the connection is gone. Read the affected record before retrying. Failed pushes
+retain their draft. Incompatible type changes leave the previous model readable.
 
-Test recovery in another instance first. Point it at the same definitions and
-an isolated data root, initialize it, then import the export:
+## Shared memory and deployment
 
-```sh
-BURO_CONFIG=/path/to/recovery/config.json BURO_ROOT=/path/to/recovery/data buro init
-BURO_CONFIG=/path/to/recovery/config.json BURO_ROOT=/path/to/recovery/data buro import /path/to/export.yaml
-BURO_CONFIG=/path/to/recovery/config.json BURO_ROOT=/path/to/recovery/data buro list
-```
+`buro serve` binds to 127.0.0.1:8765. `--host` and `--port` select another bind.
+The built-in HTTP server has no authentication, authorization, or TLS. Every
+admitted client can read and change the memory. Restrict access using the network,
+a VPN, a tunnel, or a protected HTTPS proxy. BURO does not encrypt storage,
+exports, snapshots, or ordinary HTTP. packet:false is not access control.
 
-For custom definitions, create the recovery config before initializing. Its
-`type_files` must select the saved custom files, or `schema_path` can point at
-the export's `model` saved as its own YAML file. A SQLite snapshot can replace
-the target database while its API and writers are stopped; verify `buro list`
-and a known record before restarting the service.
+`npm run deploy:live` is the optional Politia Linux rollout, not a public setup
+requirement. It packs once, stops the central API, retains the old package,
+config, and snapshot, upgrades and verifies the installed CLI/API, then updates
+reachable workers with the same package. Offline workers are recorded as pending;
+a reachable installation failure fails the rollout. The retained directory
+contains its package checksum and continuation record. Reconnect agents after
+upgrading; changed plugin code needs an agent-service restart.
 
-| Symptom | Next action |
-| --- | --- |
-| Unapplied model / different hash | Review `init --dry-run`; restore the definition if the preview rejects saved fields. |
-| Draft already exists | Inspect the printed file; finish it or preserve it before `draft clear`. |
-| Revision conflict | Preserve edits, pull a fresh draft, and review them against the current record. |
-| API unavailable / timeout | Check the client's URL and `/health` on the registry host. The draft is retained; read the record before retrying a write. |
-| Agent ignores BURO | Check `buro` in the agent's terminal, reconnect, then start a new session. |
+Use `--dry-run` for a rollout preview or `--skip-workers` for the central device
+alone. BURO_WORKER_HOSTS may provide space-separated SSH names; otherwise enabled
+host records supply ssh_target. BURO_SOURCE_ROOT chooses source, PACK_DIR chooses
+artifact storage, and BURO_WORKER_PREFIX defaults to /usr. Local data and the
+central database are never synchronized to workers.

@@ -1,46 +1,65 @@
-# Connecting an agent
+# Agent connections
 
 [English](agents.md) · [Русский](agents.ru.md) · [README](../README.md)
 
-Run `buro init`, then `buro connect <client>`. BURO connects to terminal-capable
-agents; it does not read chat history or run a model itself. Your agent chooses
-relevant records using the ongoing conversation and maintains durable facts
-when you authorize it to do so. Choosing a connection does not grant blanket
-write permissions or change the agent's existing task permissions.
+Agents need terminal access to `buro` and instructions about when to use memory.
+The supplied skill explains lookup and reviewed maintenance. The optional
+[System prompt block](../integrations/system-prompt.md) can be copied manually.
+BURO never selects or rewrites your System prompt.
 
-| Client | Installation |
-| --- | --- |
-| OpenCodez | `~/.config/opencodez/plugins/buro.js` and `skills/buro/SKILL.md` |
-| OpenCode | `~/.config/opencode/plugins/buro.js` and `skills/buro/SKILL.md` |
-| Codex | A managed block in `~/.codex/AGENTS.md` and `~/.agents/skills/buro/SKILL.md` |
-| Claude Code | A managed block in `~/.claude/CLAUDE.md` and `skills/buro/SKILL.md` |
-| Another agent | `buro connect file --path <instruction-file>` adds the managed block |
+## Included connections
 
-`--path <directory>` selects a different client profile for named clients.
-For an isolated Codex profile, the skill is placed in that directory's `skills/`;
-the default uses Codex's user-wide `.agents/skills` location. Ensure a custom
-client configuration actually discovers the chosen profile and skills.
+| Target | Files installed in the default profile | Session context |
+| --- | --- | --- |
+| opencodez | ~/.config/opencodez/skills/buro/SKILL.md; plugins/buro.js | System transform plugin |
+| opencode | ~/.config/opencode/skills/buro/SKILL.md; plugins/buro.js | System transform plugin |
+| codex | ~/.agents/skills/buro/SKILL.md; ~/.codex/hooks/buro-session-start.cjs; hooks.json | SessionStart command hook |
+| claude | ~/.claude/skills/buro/SKILL.md; hooks/buro-session-start.cjs; settings.json | SessionStart command hook |
 
-OpenCode plugins are automatically discovered, so no JSONC settings rewrite is
-needed. Restart OpenCode/OpenCodez after installation. Other clients should
-start a new session. A plugin caches instructions, not entity facts, and BURO
-being unavailable does not prevent the conversation from starting.
+Run `buro connect <target>`. `--path <profile>` chooses another profile directory;
+its skill then goes under that profile's skills directory. Unrelated hooks and
+settings are retained. Files changed by connect receive a backup; unchanged
+connections are not rewritten. A conflicting unmanaged skill or plugin is
+reported instead of overwritten. Old BURO-managed instruction blocks in Codex
+or Claude instruction files are removed when reconnecting; other text stays.
 
-Connections are repeatable. Instruction blocks preserve surrounding text;
-managed files may only replace BURO-managed files. A changed existing file is
-backed up beside itself. An unrelated file at a managed path stops installation.
-Reconnect after upgrading BURO to refresh installed skills and plugin code.
-BURO is never copied into a project's source tree unless you choose that path.
+OpenCode and OpenCodez load the plugin at startup and require a restart. The
+plugin uses `experimental.chat.system.transform`, runs current once per session,
+coalesces concurrent first requests, and reuses that result for subsequent model
+requests. Deleting a session releases its cache entry. Only current context is
+supplied; the plugin does not insert the agent contract or all definitions.
 
-Use `buro agent` for a short System prompt block and `buro agent --full` for the
-same complete workflow shipped in the skill. The rules are independent of the
-active types and folder layout. Custom types explain their fields through guides.
+Local Codex must support `hooks.json`, SessionStart, and `hookSpecificOutput.additionalContext`.
+Current releases document these in [Codex hooks](https://developers.openai.com/codex/hooks).
+Run `/hooks` to inspect and trust the installed definition, enable hooks if
+disabled, then start a new session. Hook trust is controlled by Codex; connect
+does not bypass it. Claude Code must support SessionStart command hooks and
+additionalContext; see [Claude hooks](https://code.claude.com/docs/en/hooks).
+The shared runner is a Node CommonJS file with no third-party dependencies.
 
-The connection can be verified without model calls: inspect the installed
-files, run `buro agent`, and confirm `buro <known-record>` works in the same
-terminal environment as the agent. To check agent behavior, ask it to look up
-a known object, remember an authorized durable rule, and use it in a new session.
-Model compliance is not guaranteed by successful file installation.
+SessionStart matches startup or clear. Resuming a session reuses its existing
+context; compacting does not trigger another automatic load. Refresh with
+`buro current` when needed. These integrations target local terminal harnesses;
+they do not configure cloud-hosted Codex sessions.
 
-Clients with no terminal access need another tool transport; this release
-provides CLI and HTTP, not an MCP server. HTTP alone does not install agent rules.
+The command has an eight-second deadline. A missing CLI, timeout, unreachable
+server, or invalid current output produces a visible memory-loading error while
+allowing the conversation to begin. The full device record can contain whatever
+you saved there, including secrets. Keep its contents appropriate for automatic
+context and use current_limit to bound the identity list.
+
+## Other agents
+
+```sh
+buro connect file --path /path/to/AGENTS.md
+```
+
+This explicit command maintains a marked instruction block in the chosen file.
+It installs neither a plugin nor automatic current. Alternatively copy the
+supplied prompt or skill and configure the harness's own startup mechanism.
+The agent should obtain current before device-specific work when it has not
+already received it.
+
+Reconnect after updating BURO and restart OpenCode/OpenCodez. The plugin and
+hook runner are included in the same BURO release; there is no separate plugin
+repository or package to update.
