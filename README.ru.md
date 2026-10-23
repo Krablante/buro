@@ -23,8 +23,10 @@ important:
 
 Нужен **Node.js 24.14 или новее**.
 
+Инструкции для агента: [Skill](skills/buro/SKILL.md) · [Блок системного промпта](skills/buro/system-prompt.md).
+
 ```sh
-npm install -g https://github.com/Krablante/buro/releases/download/v3.0.1/buro-3.0.1.tgz
+npm install -g https://github.com/Krablante/buro/releases/download/v3.0.2/buro-3.0.2.tgz
 buro init
 buro connect opencodez
 ```
@@ -36,7 +38,7 @@ buro connect opencodez
 
 **connect устанавливает skill и загрузку контекста сессии. Системный промпт он
 не редактирует.** Если нужна инструкция в промпте, добавьте
-[готовый блок](integrations/system-prompt.md) сами. Явная команда
+[готовый блок](skills/buro/system-prompt.md) сами. Явная команда
 `buro connect file --path /path/to/AGENTS.md` добавляет инструкцию в указанный
 файл, но не устанавливает автоматическую загрузку контекста.
 

@@ -21,14 +21,17 @@ export async function connectAgent(target, options = {}) {
   if (target === "file") {
     if (!options.path) throw new Error("connect file requires --path");
     const file = path.resolve(options.path), old = await existing(file);
-    await save(file, blockContents(file, old, await readFile(new URL("../integrations/system-prompt.md", import.meta.url), "utf8")), old);
+    await save(file, blockContents(file, old, await readFile(new URL("../skills/buro/system-prompt.md", import.meta.url), "utf8")), old);
     return `Instructions added to ${file}. Automatic session context must be configured separately.`;
   }
   const home = options.home || homedir();
   const profile = options.path || (["opencode", "opencodez"].includes(target) && process.env.OPENCODE_CONFIG_DIR);
   const root = profile ? path.resolve(profile) : path.join(home, target === "codex" ? ".codex" : target === "claude" ? ".claude" : `.config/${target}`);
   const skillRoot = target === "codex" && !options.path ? path.join(home, ".agents/skills") : path.join(root, "skills");
-  const resources = [[path.join(skillRoot, "buro/SKILL.md"), "../skills/buro/SKILL.md"]];
+  const resources = [
+    [path.join(skillRoot, "buro/SKILL.md"), "../skills/buro/SKILL.md"],
+    [path.join(skillRoot, "buro/system-prompt.md"), "../skills/buro/system-prompt.md"],
+  ];
   const openCode = ["opencode", "opencodez"].includes(target);
   if (openCode) resources.push([path.join(root, "plugins/buro.js"), "../integrations/opencode/plugin.js"]);
   else resources.push([path.join(root, "hooks/buro-session-start.cjs"), "../integrations/session-start.cjs"]);
@@ -57,5 +60,5 @@ export async function connectAgent(target, options = {}) {
     if (prior.includes(START)) changes.push({ file: instructions, old: prior, contents: blockContents(instructions, prior, "") });
   }
   for (const change of changes) await save(change.file, change.contents, change.old);
-  return `BURO connected:\n${changes.map(change => change.file).join("\n")}\n${openCode ? "Restart OpenCode/OpenCodez." : target === "codex" ? "Review and trust the SessionStart hook in /hooks, then start a new session. Hooks must be enabled in your Codex version." : "Start a new Claude Code session. SessionStart command hooks must be enabled."}\nSystem prompts are configured by you. Optional text: integrations/system-prompt.md in the BURO package.`;
+  return `BURO connected:\n${changes.map(change => change.file).join("\n")}\n${openCode ? "Restart OpenCode/OpenCodez." : target === "codex" ? "Review and trust the SessionStart hook in /hooks, then start a new session. Hooks must be enabled in your Codex version." : "Start a new Claude Code session. SessionStart command hooks must be enabled."}\nSystem prompts are configured by you. Optional text: ${path.join(skillRoot, "buro/system-prompt.md")}.`;
 }

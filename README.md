@@ -23,8 +23,10 @@ formats, references, and conflicting edits. You and your agent check the facts.
 
 Requires **Node.js 24.14 or newer**.
 
+Agent instructions: [Skill](skills/buro/SKILL.md) · [System prompt block](skills/buro/system-prompt.md).
+
 ```sh
-npm install -g https://github.com/Krablante/buro/releases/download/v3.0.1/buro-3.0.1.tgz
+npm install -g https://github.com/Krablante/buro/releases/download/v3.0.2/buro-3.0.2.tgz
 buro init
 buro connect opencodez
 ```
@@ -35,7 +37,7 @@ OpenCode/OpenCodez must restart. In local Codex, review and trust the new hook
 in `/hooks`, then start a new session. In Claude Code, start a new session.
 
 **connect installs the skill and a session context connection. It does not edit
-your System prompt.** If wanted, add [the supplied prompt](integrations/system-prompt.md)
+your System prompt.** If wanted, add [the supplied prompt](skills/buro/system-prompt.md)
 yourself. An explicit `buro connect file --path /path/to/AGENTS.md` adds instructions
 to that file, without installing an automatic context connection.
 

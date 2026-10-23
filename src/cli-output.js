@@ -40,7 +40,7 @@ Setup and operation:
   buro --version
 
 connect never edits System prompts. A ready-to-copy prompt is included in the
-package at integrations/system-prompt.md. Enable it yourself if wanted.
+package at skills/buro/system-prompt.md, beside SKILL.md. Enable it yourself if wanted.
 OpenCode/OpenCodez need a restart; Codex needs hook review in /hooks.
 No api_url: local SQLite. api_url set: shared memory, no local fallback.
 The HTTP server has no authentication or TLS; restrict access to trusted clients.

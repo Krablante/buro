@@ -220,6 +220,16 @@ test("connections preserve unrelated hooks and instructions and never inject Sys
   const plugin = await readFile(path.join(opencode, "plugins/buro.js"), "utf8");
   assert.ok(plugin.includes('["current"]'));
   assert.ok(!plugin.includes("buro agent"));
+  const prompt = await readFile(new URL("../skills/buro/system-prompt.md", import.meta.url), "utf8");
+  for (const profile of [codex, opencode]) assert.equal(await readFile(path.join(profile, "skills/buro/system-prompt.md"), "utf8"), prompt);
+  await connectAgent("opencode", { path: opencode });
+  const instructions = path.join(root, "manual-agent.md");
+  await writeFile(instructions, "Existing instructions\n");
+  await connectAgent("file", { path: instructions });
+  await connectAgent("file", { path: instructions });
+  const manual = await readFile(instructions, "utf8");
+  assert.equal(manual.split("## BURO").length, 2);
+  assert.ok(manual.startsWith("Existing instructions\n"));
 });
 
 test("v2 migration keeps raw record rows and custom definitions under the same IDs", async t => {

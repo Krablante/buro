@@ -1,6 +1,6 @@
 {
   "name": "buro",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "A CLI and SQLite memory for AI agents: typed records, reviewed YAML changes, and shared context between sessions.",
   "license": "MIT",
   "keywords": [

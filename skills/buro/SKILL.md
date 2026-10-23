@@ -7,6 +7,9 @@ description: Read and maintain durable knowledge about named projects, services,
 
 # BURO
 
+The optional [System prompt block](system-prompt.md) lives beside this skill.
+Copy it manually when wanted; connect does not edit System prompts.
+
 BURO stores durable knowledge about specific objects as typed records. A type
 defines fields, formats, and guides. Bundled project, service, and host types
 are starting points; users may use only their own types.

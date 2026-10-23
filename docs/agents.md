@@ -4,7 +4,7 @@
 
 Agents need terminal access to `buro` and instructions about when to use memory.
 The supplied skill explains lookup and reviewed maintenance. The optional
-[System prompt block](../integrations/system-prompt.md) can be copied manually.
+[System prompt block](../skills/buro/system-prompt.md) lives beside SKILL.md and can be copied manually.
 BURO never selects or rewrites your System prompt.
 
 ## Included connections
@@ -23,6 +23,9 @@ settings are retained. Files changed by connect receive a backup; unchanged
 connections are not rewritten. A conflicting unmanaged skill or plugin is
 reported instead of overwritten. Old BURO-managed instruction blocks in Codex
 or Claude instruction files are removed when reconnecting; other text stays.
+
+Each connection installs `system-prompt.md` beside `buro/SKILL.md`. It is a
+ready-to-copy resource; the connection does not insert it into a System prompt.
 
 OpenCode and OpenCodez load the plugin at startup and require a restart. The
 plugin uses `experimental.chat.system.transform`, runs current once per session,

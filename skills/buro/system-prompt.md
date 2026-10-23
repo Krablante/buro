@@ -1,3 +1,5 @@
+<!-- managed by BURO -->
+
 ## BURO
 
 BURO stores durable knowledge about specific work objects as typed records.
