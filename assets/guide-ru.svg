@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="520" height="176" viewBox="0 0 520 176" role="img" aria-labelledby="title desc">
+  <title id="title">Читать руководство BURO на русском</title>
+  <desc id="desc">Полное руководство в PDF: идея, установка и работа с памятью.</desc>
+  <rect x="1" y="1" width="518" height="174" rx="14" fill="#0d1117" stroke="#30363d"/>
+  <rect x="25" y="31" width="68" height="104" rx="5" fill="#f7f5f2"/>
+  <path d="M72 31h16a5 5 0 0 1 5 5v17H72z" fill="#d8d9dc"/>
+  <path d="M72 31v22h21" fill="none" stroke="#69717d" stroke-width="1.2"/>
+  <rect x="37" y="66" width="44" height="22" rx="3" fill="#ce273c"/>
+  <text x="59" y="82" text-anchor="middle" fill="#fff" font-family="ui-monospace,Consolas,monospace" font-size="14" font-weight="700">PDF</text>
+  <path d="M38 103h41m-41 8h31m-31 8h36" fill="none" stroke="#a6a9ad" stroke-width="2"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+    <text x="117" y="43" fill="#c9d1d9" font-size="12" font-weight="600" letter-spacing="1.5">РУССКИЙ · PDF</text>
+    <text x="117" y="82" fill="#f7f5f2" font-size="27" font-weight="700">Читать руководство</text>
+    <text x="117" y="109" fill="#a9b0ba" font-size="15">Идея · установка · работа с памятью</text>
+    <text x="117" y="145" fill="#fa7888" font-size="12" font-weight="600" letter-spacing="1.2">ОТКРЫТЬ PDF</text>
+  </g>
+  <path d="M447 139h36m-9-9 9 9-9 9" fill="none" stroke="#fa7888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
