@@ -1,19 +1,19 @@
 {
   "name": "buro",
   "version": "3.1.0",
-  "description": "A CLI and SQLite memory for AI agents: typed records, reviewed YAML changes, and shared context between sessions.",
+  "description": "Typed memory for AI agents. Keep facts, rules, and decisions about your work between sessions.",
   "license": "MIT",
   "keywords": [
     "ai-agents",
+    "agent-memory",
+    "typed-memory",
+    "persistent-memory",
     "agent-context",
-    "context-registry",
     "sqlite",
     "cli",
     "yaml",
     "schema-validation",
-    "multi-host",
-    "deterministic",
-    "agents"
+    "multi-host"
   ],
   "repository": {
     "type": "git",
@@ -22,7 +22,7 @@
   "bugs": {
     "url": "https://github.com/Krablante/buro/issues"
   },
-  "homepage": "https://github.com/Krablante/buro#readme",
+  "homepage": "https://github.com/Krablante/buro/blob/master/docs/guide.pdf",
   "type": "module",
   "engines": {
     "node": ">=24.14"
