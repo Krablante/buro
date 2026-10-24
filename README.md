@@ -1,4 +1,4 @@
-<h1 align="center">BURO</h1>
+<h1 align="center"><img src="assets/buro-cover.jpg" alt="BURO" width="880"></h1>
 
 <p align="center">
   <strong>Typed memory for AI agents.</strong><br>
