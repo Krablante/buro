@@ -6,6 +6,8 @@ BURO is a CLI and SQLite memory for AI agents. It keeps facts, rules, and decisi
 about specific projects, services, devices, books, and other work objects between
 sessions. The agent opens the relevant typed record when your task needs it.
 
+Start with the [English + Русский PDF guide](docs/guide.pdf) for a complete walkthrough.
+
 A useful record can be small:
 
 ```yaml
@@ -119,6 +121,7 @@ not encrypt its database, exports, or backups.
 
 | Topic | English | Русский |
 | --- | --- | --- |
+| How BURO works · [bilingual PDF](docs/guide.pdf) | [Guide](docs/guide.md) | [Руководство](docs/guide.ru.md) |
 | Types, record edits, v2 migration | [Model](docs/model.md) | [Модель](docs/model.ru.md) |
 | Connections and manual prompt setup | [Agents](docs/agents.md) | [Агенты](docs/agents.ru.md) |
 | Config, backup, recovery, deployment | [Operations](docs/operations.md) | [Эксплуатация](docs/operations.ru.md) |

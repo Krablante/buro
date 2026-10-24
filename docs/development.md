@@ -87,9 +87,40 @@ before exposing it.
 English uses the unsuffixed Markdown filename; translations use the same name
 with a language suffix, such as `model.ru.md` or `model.uk.md`. Keep each guide's
 language links and the README navigation table in sync. Adding a language needs
-no runtime or build change. Translate the same topics and behavior naturally.
+no runtime change. Translate the same topics and behavior naturally.
 Type guides and integration resources are instructions used directly by agents;
 keep their behavior consistent with the human guides.
+
+### Public PDF guide
+
+[guide.md](guide.md) and [guide.ru.md](guide.ru.md) are the editable sources of
+[guide.pdf](guide.pdf). They explain the product in reading order; the topic
+guides remain the detailed reference. Update both manuscripts when the described
+behavior changes, then regenerate the PDF in the same change.
+
+The renderer needs Python 3.11+, [uv](https://docs.astral.sh/uv/getting-started/installation/),
+FreeSans, and DejaVu Sans Mono. On Debian/Ubuntu, the fonts come from
+`fonts-freefont-ttf` and `fonts-dejavu-core`. Set BURO_PDF_FONTS_DIR to a directory
+containing FreeSans.ttf, FreeSansBold.ttf, FreeSansOblique.ttf, and DejaVuSansMono.ttf
+when they are installed elsewhere. Python dependencies are pinned in the script
+and isolated by uv; BURO itself needs none of them.
+
+```sh
+uv run scripts/generate-guide.py
+uv run scripts/generate-guide.py --check
+```
+
+Check rebuilds in memory and compares bytes with the saved PDF. Chapter IDs and
+order must match across languages; the installation example must match the package
+version. Page numbers, contents, bookmarks, and version labels are generated.
+Keep chapter anchors stable. Add a translation to LANGUAGES in the renderer to
+include it in the same PDF. The renderer supports the manuscripts' paragraphs,
+headings, tables, lists, quotes, and fenced code; unsupported syntax fails visibly.
+
+After editing, render the PDF with Poppler outside the checkout and inspect its
+pages, including contents links, command lengths, tables, and page breaks. Commit
+the Markdown and PDF together. No service restart or runtime release is needed
+for a guide-only update.
 
 ## Packaging and release
 
