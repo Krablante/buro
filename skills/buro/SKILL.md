@@ -67,3 +67,8 @@ and may block deletion or kind changes. New objects need new IDs; deleted IDs
 cannot be reused. Never edit SQLite directly, bypass revisions, or store a
 second rendered source of truth. Import replaces the whole memory; it is not
 an ordinary record edit. Prepare new drafts after import or recovery.
+
+For program upgrades on the current device, `buro update --check` checks the
+latest stable release and `buro update` installs it, validates bundled type
+updates in existing local memory, and refreshes connected skills and hooks.
+Custom types are preserved. Restart running agents and the BURO API afterward.

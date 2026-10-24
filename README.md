@@ -28,7 +28,7 @@ Requires **Node.js 24.14 or newer**.
 Agent instructions: [Skill](skills/buro/SKILL.md) · [System prompt block](skills/buro/system-prompt.md).
 
 ```sh
-npm install -g https://github.com/Krablante/buro/releases/download/v3.0.2/buro-3.0.2.tgz
+npm install -g https://github.com/Krablante/buro/releases/download/v3.1.0/buro-3.1.0.tgz
 buro init
 buro connect opencodez
 ```
@@ -42,6 +42,11 @@ in `/hooks`, then start a new session. In Claude Code, start a new session.
 your System prompt.** If wanted, add [the supplied prompt](skills/buro/system-prompt.md)
 yourself. An explicit `buro connect file --path /path/to/AGENTS.md` adds instructions
 to that file, without installing an automatic context connection.
+
+For later releases, run `buro update` (`buro update --check` only checks).
+It updates this device's installation, validates new bundled types against local
+memory, and refreshes existing agent connections. Custom types stay yours.
+Restart running agents and the BURO API after updating. See [updates](docs/operations.md#updating-buro).
 
 At session start, the connection runs `buro current` once and supplies the current
 device's record, when present, plus a bounded list of associated objects. The agent

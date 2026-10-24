@@ -28,7 +28,7 @@ important:
 Инструкции для агента: [Skill](skills/buro/SKILL.md) · [Блок системного промпта](skills/buro/system-prompt.md).
 
 ```sh
-npm install -g https://github.com/Krablante/buro/releases/download/v3.0.2/buro-3.0.2.tgz
+npm install -g https://github.com/Krablante/buro/releases/download/v3.1.0/buro-3.1.0.tgz
 buro init
 buro connect opencodez
 ```
@@ -43,6 +43,12 @@ buro connect opencodez
 [готовый блок](skills/buro/system-prompt.md) сами. Явная команда
 `buro connect file --path /path/to/AGENTS.md` добавляет инструкцию в указанный
 файл, но не устанавливает автоматическую загрузку контекста.
+
+Для следующих выпусков запускайте `buro update` (`buro update --check` только
+проверяет). Команда обновляет установку на этом устройстве, проверяет новые
+коробочные типы на местной памяти и обновляет существующие подключения агентов.
+Свои типы сохраняются. После обновления перезапустите работающих агентов и API
+BURO. Подробнее — в [обновлении программы](docs/operations.ru.md#обновление-buro).
 
 В начале сессии подключение один раз запускает `buro current`: передаёт запись
 устройства, если она есть, и ограниченный список связанных объектов. Нужные полные

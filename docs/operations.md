@@ -19,6 +19,51 @@ Drafts are private files in OS temporary directories, each with its own path.
 They are not stored next to source. Temporary-directory cleanup may remove old
 drafts; preserve intended edits elsewhere if they must survive that cleanup.
 
+## Updating BURO
+
+```sh
+buro update --check
+buro update
+```
+
+Update finds the latest stable GitHub release, checks the package's SHA-256,
+name, version, and Node.js requirement, and replaces the current global npm
+installation. No GitHub token or `gh` command is needed. `--check` only queries
+the release; it does not change packages, memory, or connections. Newer installed
+versions are never downgraded. Source checkouts and linked packages keep their
+development workflow; update refuses to replace them.
+
+Run it as your usual user. For a protected Linux/macOS installation, only npm
+runs through sudo. Windows system installations require an elevated terminal.
+The selected npm prefix comes from the running BURO, even when the active npm
+uses another prefix. Network, integrity, and Node.js checks happen before npm
+replaces the package.
+
+After installation, the new code adopts bundled type changes in existing local
+memory using the same validation and snapshot mechanism as init. Custom types,
+records, and configuration are preserved. Incompatible definitions leave the
+accepted memory unchanged and produce an error. A client never creates local
+storage or migrates the server's memory; update the database device separately.
+An uninitialized device stays uninitialized.
+
+Existing agent connections are refreshed, including their skill, supplied prompt
+file, plugin, or hook runner. Connect remembers profiles and explicit instruction
+files in `~/.config/buro/connections.json`, independently of the memory target.
+Older connections in default profiles or OPENCODE_CONFIG_DIR are discovered
+automatically. Reconnect older custom profiles or instruction files once to
+register them. Removed connections are skipped; unrelated files and hooks stay.
+Personal System prompts remain manually configured.
+
+Restart connected agents and any running `buro serve` process after updating.
+Update affects only this device; it does not restart services or deploy to other
+hosts. Even when the package is already current, update retries memory and
+connection refresh, so it can finish after a corrected migration or profile
+error. It does not roll back an installed package when those follow-up steps fail.
+
+Versions before 3.1 need one manual npm installation of a release containing
+update. The current command is in the README. A manual npm upgrade still needs
+`buro init` and `buro connect <target>` afterward.
+
 ## Configuration
 
 No editable config is required for the local default. A shared-memory client uses:

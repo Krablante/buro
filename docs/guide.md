@@ -62,7 +62,7 @@ Requires **Node.js 24.14 or newer**. Install the public release package, create 
 
 ```sh
 npm install -g \
-  https://github.com/Krablante/buro/releases/download/v3.0.2/buro-3.0.2.tgz
+  https://github.com/Krablante/buro/releases/download/v3.1.0/buro-3.1.0.tgz
 buro init
 buro connect opencodez
 ```
@@ -137,7 +137,7 @@ Set the list limit through current_limit in config.json; the default is 100. If 
 
 Resuming or compacting a terminal session does not run these hooks again. The agent can refresh facts with `buro current` when needed.
 
-**If BURO is unavailable, chatting still begins.** The agent receives a loading error, not an empty memory. Connections ship and update with BURO; reconnect after upgrading. Codex/Claude connections target local harnesses; compatibility details are in the [agent guide](https://github.com/Krablante/buro/blob/master/docs/agents.md).
+**If BURO is unavailable, chatting still begins.** The agent receives a loading error, not an empty memory. Connections ship with BURO and are refreshed by `buro update`. Codex/Claude connections target local harnesses; compatibility details are in the [agent guide](https://github.com/Krablante/buro/blob/master/docs/agents.md).
 
 <a id="intra"></a>
 
@@ -599,9 +599,9 @@ Keys, passwords, and tokens may be stored under the same rules as other facts. B
 
 *20 / CONTINUE BY TASK*
 
-**Updating the program preserves existing memory.** Records, custom definitions, and configuration live outside the package being replaced. Remove unwanted fields and types through separate reviewed changes.
+**Run `buro update` to install the latest stable GitHub release on this device.** `buro update --check` only checks. The command verifies the package, updates compatible bundled definitions in existing local memory, and refreshes agent connections. Custom types and records are preserved.
 
-Reconnect after upgrading; a new plugin requires an OpenCode/OpenCodez restart. Personal System prompt text is maintained separately. The ready-made instructions live together at skills/buro/SKILL.md and skills/buro/system-prompt.md.
+Restart connected agents and any running BURO API afterward. Older custom profiles need connect once to register their paths. Versions before 3.1 need one manual npm upgrade. Personal System prompts stay manually configured; supplied instructions are in skills/buro/.
 
 ## when something fails
 

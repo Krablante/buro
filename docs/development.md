@@ -2,8 +2,8 @@
 
 [English](development.md) · [Русский](development.ru.md) · [README](../README.md)
 
-Use Node.js 24.14+. SQLite is provided by Node; js-yaml is the only runtime
-dependency. There is no build step or database daemon for local use.
+Use Node.js 24.14+. SQLite is provided by Node; runtime dependencies are js-yaml
+and semver. There is no build step or database daemon for local use.
 
 ```sh
 npm ci
@@ -52,6 +52,12 @@ the resolver queues writes inside one server process. Read definitions are loade
 from the saved model, so an invalid proposal never blocks the accepted model.
 The HTTP server reads current definitions rather than pinning them until restart.
 No second registry, worker DB copies, RAG store, or background model is involved.
+
+The updater owns GitHub release discovery, archive integrity, version and engine
+checks, and replacement of the actual global npm installation. Post-install work
+runs in a fresh process using the new package. Existing memory goes through
+initializeRegistry; agent.js owns tracked connection refresh. Only the npm
+installation may need elevation; memory and profile work keeps the calling user.
 
 Every changed write also copies the complete database for its mandatory snapshot.
 This is the main cost that grows with saved content; bounded query results do not

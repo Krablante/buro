@@ -22,7 +22,7 @@ function parse(argv) {
     const token = argv[i];
     if (!token.startsWith("--")) { args.push(token); continue; }
     const [name, ...values] = token.slice(2).split("=");
-    if (["help", "version", "dry-run", "scheduled"].includes(name)) { if (values.length) throw new Error(`${name} takes no value`); options[name] = true; }
+    if (["help", "version", "dry-run", "scheduled", "check"].includes(name)) { if (values.length) throw new Error(`${name} takes no value`); options[name] = true; }
     else { const value = values.length ? values.join("=") : argv[++i]; if (!value || value.startsWith("--")) throw new Error(`--${name} requires a value`); options[name] = value; }
   }
   return { args, options };
@@ -52,6 +52,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   const { args, options } = parse(argv);
   const command = options.help ? "help" : options.version ? "version" : args[0] || "help";
   if (command === "version") { syntax(args, options, 1, ["version"]); console.log(VERSION); return; }
+  if (command === "update") { syntax(args, options, 1, ["check"]); const { updateBuro } = await import("./update.js"); await updateBuro({ check: Boolean(options.check) }); return; }
   if (command === "connect") { syntax(args, options, 2, ["path"]); console.log(await connectAgent(required(args[1], "agent name"), options)); return; }
   const config = loadConfig();
   if (command === "help") {

@@ -26,6 +26,7 @@ Copies are independent. --from prefers the bundled template when one exists,
 otherwise the active custom type. Bundled types cannot be edited or deleted.
 
 Setup and operation:
+  buro update [--check]             Latest stable GitHub release; --check only reads
   buro init [--dry-run]             Create memory or preview/upgrade saved types
   buro connect <opencodez|opencode|codex|claude> [--path <profile>]
                                    Install skill and session context connection

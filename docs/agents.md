@@ -64,6 +64,9 @@ supplied prompt or skill and configure the harness's own startup mechanism.
 The agent should obtain current before device-specific work when it has not
 already received it.
 
-Reconnect after updating BURO and restart OpenCode/OpenCodez. The plugin and
-hook runner are included in the same BURO release; there is no separate plugin
-repository or package to update.
+`buro update` refreshes existing connections from the same release, then asks you
+to restart connected agents. Connect records each profile's location, including
+`--path`, for later refreshes. Default profiles from older releases are discovered
+automatically; reconnect an older custom profile or explicit instruction file
+once to register it. A manual npm upgrade still needs connect. See
+[updating BURO](operations.md#updating-buro) for package and memory behavior.
