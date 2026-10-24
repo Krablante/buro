@@ -133,17 +133,6 @@ for a guide-only update.
 
 ## Packaging and release
 
-The repository social preview is `assets/social-preview.png` (1280 × 640), with
-editable source in `assets/social-preview.svg`. After editing, render it with:
-
-```sh
-uv run --with cairosvg==2.9.1 python -c 'import cairosvg; cairosvg.svg2png(url="assets/social-preview.svg", write_to="assets/social-preview.png")'
-```
-
-Inspect the PNG, then upload it in the repository's Settings → Social preview.
-Committing the image alone does not select it on GitHub. About metadata is managed
-on GitHub separately from the package description, homepage, and keywords.
-
 One package contains CLI, server, three bundled definitions, the agent skill,
 manual prompt, plugin, hook runner, documentation, and optional operator scripts.
 Test sources, private facts, local databases, temporary files, and dependencies
