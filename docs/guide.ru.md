@@ -1,4 +1,4 @@
-[English](guide.md) · [Русский](guide.ru.md) · [Двуязычный PDF](guide.pdf) · [README](../README.ru.md)
+[English](guide.md) · [Русский](guide.ru.md) · [PDF](guide.ru.pdf) · [README](../README.ru.md)
 
 <a id="cover"></a>
 

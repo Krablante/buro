@@ -2,7 +2,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["reportlab==5.1.0", "markdown-it-py==3.0.0"]
 # ///
-"""Build the public bilingual guide. Run with: uv run scripts/generate-guide.py."""
+"""Build one public guide PDF per language. Run with: uv run scripts/generate-guide.py."""
 
 import argparse
 from dataclasses import dataclass
@@ -27,7 +27,18 @@ from reportlab.platypus import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-LANGUAGES = (("en", "English", "guide.md"), ("ru", "Русский", "guide.ru.md"))
+LANGUAGES = {
+    "en": {
+        "name": "English", "source": "guide.md", "contents": "contents",
+        "contents_label": "READ IN ORDER OR CHOOSE A TOPIC",
+        "contents_intro": "Click a topic or use the PDF bookmarks.",
+    },
+    "ru": {
+        "name": "Русский", "source": "guide.ru.md", "contents": "оглавление",
+        "contents_label": "ЧИТАЙТЕ ПО ПОРЯДКУ ИЛИ ВЫБЕРИТЕ ТЕМУ",
+        "contents_intro": "Нажмите на название главы или используйте закладки PDF.",
+    },
+}
 WIDTH, HEIGHT = A4
 MARGIN = 45
 CONTENT = WIDTH - 2 * MARGIN
@@ -286,11 +297,9 @@ class Cover(Flowable):
             else:
                 i += 1
         if y < 145:
-            raise ValueError(f"Cover content reaches language navigation: {self.language}")
-        language_links = [f'<link href="#{lang}-cover">{escape(name)}</link>'
-                          for lang, name, _ in LANGUAGES]
-        language_links.append('<link href="#contents">Contents / Оглавление</link>')
-        paragraph(" · ".join(language_links), 119, fontSize=10.5, leading=14,
+            raise ValueError(f"Cover content reaches contents navigation: {self.language}")
+        contents = escape(LANGUAGES[self.language]["contents"])
+        paragraph(f'<link href="#contents">{contents}</link>', 119, fontSize=10.5, leading=14,
                   textColor=colors.HexColor("#ef6679"))
         phase_width = CONTENT / len(phases)
         for index, phase in enumerate(phases):
@@ -306,61 +315,48 @@ class Cover(Flowable):
 
 
 class Contents(Flowable):
-    def __init__(self, chapters, pages, languages):
+    def __init__(self, chapters, pages, language):
         super().__init__()
-        self.chapters, self.pages, self.languages = chapters, pages, languages
+        self.chapters, self.pages, self.language = chapters, pages, language
         self.width = CONTENT
         self.height = 574
 
     def draw(self):
         c = self.canv
-        languages = [entry[0] for entry in self.languages]
-        column = (CONTENT - 24) / len(languages)
-        for index, (_, name, _) in enumerate(self.languages):
-            c.setFont("GuideBold", 10.5)
-            c.setFillColor(RED)
-            c.drawString(24 + index * column, self.height - 6, name)
-        y = self.height - 39
-        for number, chapter in enumerate(self.chapters[languages[0]][1:], 1):
+        y = self.height - 5
+        for number, chapter in enumerate(self.chapters[1:], 1):
             c.setFont("GuideMono", 8.4)
             c.setFillColor(MUTED)
             c.drawString(0, y + 1, f"{number:02}")
-            row_height = 0
-            for index, language in enumerate(languages):
-                translated = self.chapters[language][number]
-                key = f"{language}-{chapter.key}"
-                p = Paragraph(f'<link href="#{key}">{escape(translated.title)}</link>',
-                              style("toc", fontSize=10.5, leading=13, spaceAfter=0))
-                _, h = p.wrap(column - 31, 100)
-                x = 24 + index * column
-                p.drawOn(c, x, y + 10 - h)
-                c.setFont("GuideMono", 8.5)
-                c.setFillColor(RED)
-                c.drawRightString(x + column - 9, y + 1, str(self.pages.get(key, "–")))
-                c.linkRect("", key, (x, y + 10 - h, x + column - 7, y + 13), relative=1, thickness=0)
-                row_height = max(row_height, h)
+            key = f"{self.language}-{chapter.key}"
+            p = Paragraph(f'<link href="#{key}">{escape(chapter.title)}</link>',
+                          style("toc", fontSize=12, leading=16, spaceAfter=0))
+            _, h = p.wrap(CONTENT - 65, 100)
+            p.drawOn(c, 30, y + 10 - h)
+            c.setFont("GuideMono", 9)
+            c.setFillColor(RED)
+            c.drawRightString(CONTENT, y + 1, str(self.pages.get(key, "–")))
+            c.linkRect("", key, (30, y + 10 - h, CONTENT, y + 13), relative=1, thickness=0)
             c.setStrokeColor(LINE)
             c.setLineWidth(0.4)
-            c.line(0, y - row_height + 3, CONTENT, y - row_height + 3)
-            y -= row_height + 12
+            c.line(0, y - h + 3, CONTENT, y - h + 3)
+            y -= h + 12
         if y < 0:
             raise ValueError("Contents exceeds one page; adjust its layout")
 
 
-def build(chapters, version, known_pages):
+def build(chapters, language, version, known_pages):
     stream, actual_pages = BytesIO(), {}
+    wording = LANGUAGES[language]
     doc = BaseDocTemplate(stream, pagesize=A4, leftMargin=MARGIN, rightMargin=MARGIN,
                           topMargin=42, bottomMargin=58,
-                          title=f"BURO {version} · {' / '.join(name for _, name, _ in LANGUAGES)}",
-                          author="BURO", subject="Typed memory for work objects · Public guide",
+                          title=f"BURO {version} · {wording['name']}",
+                          author="BURO", subject=chapters[0].tokens[1].content,
                           pageCompression=1)
     frame = Frame(MARGIN, 58, CONTENT, HEIGHT - 100, leftPadding=0,
                   rightPadding=0, topPadding=0, bottomPadding=0, id="page")
-    cover_pages = {known_pages.get(f"{lang}-cover", -1) for lang, _, _ in LANGUAGES}
-    cover_pages.add(1)
-
     def background(c, current_doc):
-        dark = current_doc.page in cover_pages
+        dark = current_doc.page == 1
         c.saveState()
         c.setFillColor(DARK if dark else PAPER)
         c.rect(0, 0, WIDTH, HEIGHT, fill=1, stroke=0)
@@ -371,8 +367,7 @@ def build(chapters, version, known_pages):
         c.setFont("GuideBold", 7.6)
         c.drawString(MARGIN, 27, f"BURO / {version}")
         x = MARGIN + 98
-        nav = [(lang.upper(), f"{lang}-cover") for lang, _, _ in LANGUAGES]
-        nav.append(("CONTENTS / ОГЛАВЛЕНИЕ", "contents"))
+        nav = [(language.upper(), f"{language}-cover"), (wording["contents"].upper(), "contents")]
         for text, target in nav:
             w = c.stringWidth(text, "GuideBold", 7.6)
             c.drawString(x, 27, text)
@@ -384,33 +379,23 @@ def build(chapters, version, known_pages):
         c.restoreState()
 
     doc.addPageTemplates(PageTemplate(id="guide", frames=[frame], onPage=background))
-    story = []
-    for language, name, _ in LANGUAGES:
-        if story:
-            story.append(PageBreak())
-        cover = chapters[language][0]
-        story.extend([Destination(f"{language}-cover", name, actual_pages, 0),
-                      Cover(cover, language, version)])
-        if language == LANGUAGES[0][0]:
-            for start in range(0, len(LANGUAGES), 2):
-                key = "contents" if start == 0 else f"contents-{start // 2 + 1}"
-                story.extend([
-                    PageBreak(), Destination(key, "Contents / Оглавление", actual_pages),
-                    Paragraph("READ IN ORDER OR CHOOSE A TOPIC / ВЫБЕРИТЕ ТЕМУ", STYLES["label"]),
-                    Paragraph("contents / оглавление", STYLES["title"]),
-                    Paragraph("Choose a language and topic. Click a title or use the PDF bookmarks.<br/>"
-                              "Выберите язык и тему. Названия глав и закладки PDF кликабельны.",
-                              STYLES["body"]), Spacer(1, 14),
-                    Contents(chapters, known_pages, LANGUAGES[start:start + 2]),
-                ])
-        for chapter in chapters[language][1:]:
-            content = blocks(chapter.tokens, language)
-            story.extend([
-                PageBreak(), Destination(f"{language}-{chapter.key}", chapter.title, actual_pages),
-                KeepTogether([Paragraph(chapter.label, STYLES["label"]),
-                              Paragraph(chapter.title, STYLES["title"]), content[0]]),
-                *content[1:],
-            ])
+    story = [
+        Destination(f"{language}-cover", wording["name"], actual_pages, 0),
+        Cover(chapters[0], language, version),
+        PageBreak(), Destination("contents", wording["contents"], actual_pages),
+        Paragraph(wording["contents_label"], STYLES["label"]),
+        Paragraph(wording["contents"], STYLES["title"]),
+        Paragraph(wording["contents_intro"], STYLES["body"]), Spacer(1, 14),
+        Contents(chapters, known_pages, language),
+    ]
+    for chapter in chapters[1:]:
+        content = blocks(chapter.tokens, language)
+        story.extend([
+            PageBreak(), Destination(f"{language}-{chapter.key}", chapter.title, actual_pages),
+            KeepTogether([Paragraph(chapter.label, STYLES["label"]),
+                          Paragraph(chapter.title, STYLES["title"]), content[0]]),
+            *content[1:],
+        ])
     doc.build(story, canvasmaker=lambda *a, **kw: Canvas(*a, **{**kw, "invariant": 1}))
     actual_pages["total"] = doc.page
     return stream.getvalue(), actual_pages
@@ -418,26 +403,27 @@ def build(chapters, version, known_pages):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true", help="Fail if the committed PDF needs rebuilding")
+    parser.add_argument("--check", action="store_true", help="Fail if any committed PDF needs rebuilding")
     args = parser.parse_args()
     fonts()
     version = json.loads((ROOT / "package.json").read_text())["version"]
-    chapters = {lang: load_chapters(filename, version) for lang, _, filename in LANGUAGES}
+    chapters = {lang: load_chapters(wording["source"], version) for lang, wording in LANGUAGES.items()}
     keys = [[chapter.key for chapter in items] for items in chapters.values()]
     if any(key != keys[0] for key in keys[1:]) or len(set(keys[0])) != len(keys[0]):
         raise SystemExit("Guide languages must have the same unique chapter IDs in the same order")
-    _, pages = build(chapters, version, {})
-    output, final_pages = build(chapters, version, pages)
-    if final_pages != pages:
-        raise SystemExit("Page layout changed between passes; inspect the contents layout")
-    path = ROOT / "docs" / "guide.pdf"
-    if args.check:
-        if not path.is_file() or path.read_bytes() != output:
-            raise SystemExit("docs/guide.pdf is stale; run uv run scripts/generate-guide.py")
-        print(f"Guide is current: {pages['total']} pages, {len(output):,} bytes")
-    else:
-        path.write_bytes(output)
-        print(f"Wrote {path.relative_to(ROOT)}: {pages['total']} pages, {len(output):,} bytes")
+    for language, wording in LANGUAGES.items():
+        _, pages = build(chapters[language], language, version, {})
+        output, final_pages = build(chapters[language], language, version, pages)
+        if final_pages != pages:
+            raise SystemExit(f"Page layout changed between passes: {language}")
+        path = (ROOT / "docs" / wording["source"]).with_suffix(".pdf")
+        if args.check:
+            if not path.is_file() or path.read_bytes() != output:
+                raise SystemExit(f"{path.relative_to(ROOT)} is stale; run uv run scripts/generate-guide.py")
+            print(f"{path.relative_to(ROOT)} is current: {pages['total']} pages, {len(output):,} bytes")
+        else:
+            path.write_bytes(output)
+            print(f"Wrote {path.relative_to(ROOT)}: {pages['total']} pages, {len(output):,} bytes")
 
 
 if __name__ == "__main__":

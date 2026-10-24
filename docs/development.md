@@ -91,12 +91,14 @@ no runtime change. Translate the same topics and behavior naturally.
 Type guides and integration resources are instructions used directly by agents;
 keep their behavior consistent with the human guides.
 
-### Public PDF guide
+### Public PDF guides
 
 [guide.md](guide.md) and [guide.ru.md](guide.ru.md) are the editable sources of
-[guide.pdf](guide.pdf). They explain the product in reading order; the topic
-guides remain the detailed reference. Update both manuscripts when the described
-behavior changes, then regenerate the PDF in the same change.
+the separate [English PDF](guide.pdf) and [Russian PDF](guide.ru.pdf). Each file
+has its own cover, contents, bookmarks, and page numbers in that language.
+They explain the product in reading order; the topic guides remain the detailed
+reference. Update both manuscripts when the described behavior changes, then
+regenerate both PDFs in the same change.
 
 The renderer needs Python 3.11+, [uv](https://docs.astral.sh/uv/getting-started/installation/),
 FreeSans, and DejaVu Sans Mono. On Debian/Ubuntu, the fonts come from
@@ -110,16 +112,17 @@ uv run scripts/generate-guide.py
 uv run scripts/generate-guide.py --check
 ```
 
-Check rebuilds in memory and compares bytes with the saved PDF. Chapter IDs and
+Check rebuilds in memory and compares bytes with each saved PDF. Chapter IDs and
 order must match across languages; the installation example must match the package
 version. Page numbers, contents, bookmarks, and version labels are generated.
-Keep chapter anchors stable. Add a translation to LANGUAGES in the renderer to
-include it in the same PDF. The renderer supports the manuscripts' paragraphs,
-headings, tables, lists, quotes, and fenced code; unsupported syntax fails visibly.
+Keep chapter anchors stable. Add a translation and its contents wording to
+LANGUAGES in the renderer to generate its own PDF. The renderer supports the
+manuscripts' paragraphs, headings, tables, lists, quotes, and fenced code;
+unsupported syntax fails visibly.
 
-After editing, render the PDF with Poppler outside the checkout and inspect its
+After editing, render both PDFs with Poppler outside the checkout and inspect their
 pages, including contents links, command lengths, tables, and page breaks. Commit
-the Markdown and PDF together. No service restart or runtime release is needed
+the Markdown and PDFs together. No service restart or runtime release is needed
 for a guide-only update.
 
 ## Packaging and release
